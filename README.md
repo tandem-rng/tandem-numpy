@@ -55,8 +55,7 @@ CI fails when the vendored C sources or the vectors drift from upstream. `tools/
 
 ## Speed
 
-Apple M4, one thread, `pixi run bench`, 2^24 Float64 draws, minimum of seven runs, load
-average 2.8 during the run:
+Apple M4, one thread, `pixi run bench`, 2^24 Float64 draws, minimum of seven runs:
 
 | | GiB/s |
 |---|---|

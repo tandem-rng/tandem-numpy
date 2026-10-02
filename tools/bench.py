@@ -1,6 +1,5 @@
 """Throughput of 2**24 Float64 draws: Tandem fills into a buffer and a new array, then Generator rows."""
 
-import os
 import time
 
 import numpy as np
@@ -36,4 +35,3 @@ rows = [
 ]
 for name, gibs in rows:
     print(f"{name:36s} {gibs:6.2f} GiB/s")
-print("load", os.getloadavg())

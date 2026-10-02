@@ -37,7 +37,8 @@ cdef extern from "tandem.h":
 # are those of tandem_next_u64 and tandem_next_u32: a 32-bit draw takes the low half of a
 # word and keeps the high half for the next 32-bit draw, which is the stream's alignment
 # rule, and a 64-bit draw after a pending half discards it, as alignment to 64 bits does.
-DEF BUF_WORDS = 1024
+cdef enum:
+    BUF_WORDS = 1024
 
 cdef struct buffered:
     tandem_rng rng

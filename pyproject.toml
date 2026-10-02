@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "Cython>=3.0", "numpy>=2.0"]
-build-backend = "setuptools.build_meta"
+requires = ["meson-python>=0.18", "Cython>=3.1", "numpy>=2.0"]
+build-backend = "mesonpy"
 
 [project]
 name = "tandem-rng"
@@ -20,12 +20,6 @@ classifiers = [
 [project.urls]
 Specification = "https://github.com/tandem-rng/spec"
 Source = "https://github.com/tandem-rng/tandem-numpy"
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-tandem_rng = ["c/tandem.h"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

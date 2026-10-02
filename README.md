@@ -43,8 +43,9 @@ specification's own mappings, so `Generator(Tandem(42)).random(n)` equals `Tande
 pip install .
 ```
 
-The build needs a C compiler, Cython 3, and NumPy 2. For development, `pixi install` creates
-an environment with the package installed editable, and `pixi run test` runs the tests.
+The build uses meson-python and needs a C compiler. For development, `pixi install` creates an
+environment with the package installed editable, which rebuilds the extension on import when
+the sources change, and `pixi run test` runs the tests.
 
 ## Tests
 

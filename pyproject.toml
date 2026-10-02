@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "Cython>=3.0", "numpy>=2.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tandem-rng"
+version = "0.1.0"
+description = "NumPy BitGenerator for Tandem8x32, a pseudorandom number generator fast on CPUs and GPUs alike"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{name = "Jessica Cox"}]
+requires-python = ">=3.11"
+dependencies = ["numpy>=2.0"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+
+[project.urls]
+Specification = "https://github.com/tandem-rng/spec"
+Source = "https://github.com/tandem-rng/tandem-numpy"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tandem_rng = ["c/tandem.h"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

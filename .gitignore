@@ -1,0 +1,7 @@
+build/
+*.so
+*.egg-info/
+__pycache__/
+.pixi/
+pixi.lock
+src/tandem_rng/_tandem.c

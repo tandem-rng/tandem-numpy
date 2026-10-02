@@ -32,14 +32,54 @@ cdef extern from "tandem.h":
     tandem_rng tandem_sub(const tandem_rng *rng, uint64_t purpose) nogil
     void tandem_fork(tandem_rng *parent, tandem_rng *children, uint64_t n) nogil
 
-cdef uint64_t next_u64(void *st) noexcept nogil:
-    return tandem_next_u64(<tandem_rng *>st)
+# NumPy asks the bit generator for one value at a time through these hooks. A buffer of
+# 64-bit words amortises the per-call cost of the generator. The values and their order
+# are those of tandem_next_u64 and tandem_next_u32: a 32-bit draw takes the low half of a
+# word and keeps the high half for the next 32-bit draw, which is the stream's alignment
+# rule, and a 64-bit draw after a pending half discards it, as alignment to 64 bits does.
+DEF BUF_WORDS = 1024
+
+cdef struct buffered:
+    tandem_rng rng
+    uint64_t buf[BUF_WORDS]
+    size_t left
+    uint32_t pending
+    bint has_pending
+
+cdef inline uint64_t next_u64(void *st) noexcept nogil:
+    cdef buffered *b = <buffered *>st
+    b.has_pending = False
+    if b.left == 0:
+        tandem_fill_u64(&b.rng, b.buf, BUF_WORDS)
+        b.left = BUF_WORDS
+    b.left -= 1
+    return b.buf[BUF_WORDS - 1 - b.left]
 
 cdef uint32_t next_u32(void *st) noexcept nogil:
-    return tandem_next_u32(<tandem_rng *>st)
+    cdef buffered *b = <buffered *>st
+    cdef uint64_t w
+    if b.has_pending:
+        b.has_pending = False
+        return b.pending
+    if b.left == 0 and (tandem_position(&b.rng) & 63) != 0:
+        # Only from a 64-bit boundary does a buffered word read the same bits as the C draw.
+        return tandem_next_u32(&b.rng)
+    w = next_u64(st)
+    b.pending = <uint32_t>(w >> 32)
+    b.has_pending = True
+    return <uint32_t>w
 
 cdef double next_f64(void *st) noexcept nogil:
-    return tandem_next_f64(<tandem_rng *>st)
+    return <double>(next_u64(st) >> 11) * (1.0 / 9007199254740992.0)
+
+cdef inline uint64_t logical_position(buffered *b) noexcept nogil:
+    return tandem_position(&b.rng) - 64 * b.left - (32 if b.has_pending else 0)
+
+cdef inline void flush(buffered *b) noexcept nogil:
+    # Put the C generator at the position the buffered draws have reached.
+    b.rng.pos = logical_position(b)
+    b.left = 0
+    b.has_pending = False
 
 
 cdef class Tandem(BitGenerator):
@@ -52,7 +92,7 @@ cdef class Tandem(BitGenerator):
     [1, 65536].
     """
 
-    cdef tandem_rng rng_state
+    cdef buffered st
 
     def __init__(self, seed=None, K=32):
         BitGenerator.__init__(self, seed)
@@ -62,8 +102,10 @@ cdef class Tandem(BitGenerator):
             seed = int.from_bytes(words.tobytes(), "little")
         if not 0 <= seed < 2**128:
             raise ValueError("seed must lie in [0, 2**128)")
-        self.rng_state = tandem_seed(seed & (2**64 - 1), seed >> 64, _check_K(K))
-        self._bitgen.state = &self.rng_state
+        self.st.rng = tandem_seed(seed & (2**64 - 1), seed >> 64, _check_K(K))
+        self.st.left = 0
+        self.st.has_pending = False
+        self._bitgen.state = &self.st
         self._bitgen.next_uint64 = &next_u64
         self._bitgen.next_uint32 = &next_u32
         self._bitgen.next_double = &next_f64
@@ -79,22 +121,22 @@ cdef class Tandem(BitGenerator):
     @staticmethod
     cdef Tandem _wrap(tandem_rng s):
         cdef Tandem rng = Tandem(0, tandem_chunk_length(&s))
-        rng.rng_state = s
+        rng.st.rng = s
         return rng
 
     @property
     def key(self):
         cdef uint32_t k[4]
-        tandem_key(&self.rng_state, k)
+        tandem_key(&self.st.rng, k)
         return (k[0], k[1], k[2], k[3])
 
     @property
     def position(self):
-        return tandem_position(&self.rng_state)
+        return logical_position(&self.st)
 
     @property
     def chunk_length(self):
-        return tandem_chunk_length(&self.rng_state)
+        return tandem_chunk_length(&self.st.rng)
 
     @property
     def state(self):
@@ -118,15 +160,17 @@ cdef class Tandem(BitGenerator):
         pos = int(value["position"])
         if not 0 <= pos < 2**63:
             raise ValueError("position must lie in [0, 2**63)")
-        self.rng_state = tandem_from_key(k, pos, _check_K(value["K"]))
+        self.st.rng = tandem_from_key(k, pos, _check_K(value["K"]))
+        self.st.left = 0
+        self.st.has_pending = False
 
     def split(self, index):
         """Child by index, from the key alone. Position is preserved."""
-        return Tandem._wrap(tandem_split(&self.rng_state, _check_u64(index)))
+        return Tandem._wrap(tandem_split(&self.st.rng, _check_u64(index)))
 
     def sub(self, purpose):
         """Child for a purpose identifier. Position is preserved."""
-        return Tandem._wrap(tandem_sub(&self.rng_state, _check_u64(purpose)))
+        return Tandem._wrap(tandem_sub(&self.st.rng, _check_u64(purpose)))
 
     def fork(self, n):
         """``n`` children from the current block. The parent moves past the block."""
@@ -135,7 +179,8 @@ cdef class Tandem(BitGenerator):
             raise ValueError("fork size must lie in [0, 2**33]")
         cdef np.ndarray buf = np.empty(n * sizeof(tandem_rng), dtype=np.uint8)
         cdef tandem_rng *kids = <tandem_rng *>np.PyArray_DATA(buf)
-        tandem_fork(&self.rng_state, kids, n)
+        flush(&self.st)
+        tandem_fork(&self.st.rng, kids, n)
         return [Tandem._wrap(kids[i]) for i in range(n)]
 
     def random(self, size=None, dtype=np.float64, out=None):
@@ -146,12 +191,13 @@ cdef class Tandem(BitGenerator):
         cdef np.ndarray a = _buffer(size, dtype, out, (np.float64, np.float32))
         cdef size_t n = a.size
         cdef void *p = np.PyArray_DATA(a)
+        flush(&self.st)
         if a.dtype == np.float64:
             with nogil:
-                tandem_fill_f64(&self.rng_state, <double *>p, n)
+                tandem_fill_f64(&self.st.rng, <double *>p, n)
         else:
             with nogil:
-                tandem_fill_f32(&self.rng_state, <float *>p, n)
+                tandem_fill_f32(&self.st.rng, <float *>p, n)
         return a[()] if size is None and out is None else a
 
     def raw(self, size=None, dtype=np.uint64, out=None):
@@ -163,15 +209,16 @@ cdef class Tandem(BitGenerator):
         cdef size_t n = a.size
         cdef void *p = np.PyArray_DATA(a)
         cdef int w = a.dtype.itemsize
+        flush(&self.st)
         with nogil:
             if w == 8:
-                tandem_fill_u64(&self.rng_state, <uint64_t *>p, n)
+                tandem_fill_u64(&self.st.rng, <uint64_t *>p, n)
             elif w == 4:
-                tandem_fill_u32(&self.rng_state, <uint32_t *>p, n)
+                tandem_fill_u32(&self.st.rng, <uint32_t *>p, n)
             elif w == 2:
-                tandem_fill_u16(&self.rng_state, <uint16_t *>p, n)
+                tandem_fill_u16(&self.st.rng, <uint16_t *>p, n)
             else:
-                tandem_fill_u8(&self.rng_state, <uint8_t *>p, n)
+                tandem_fill_u8(&self.st.rng, <uint8_t *>p, n)
         return a[()] if size is None and out is None else a
 
 

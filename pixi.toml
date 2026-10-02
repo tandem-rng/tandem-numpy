@@ -16,5 +16,6 @@ c-compiler = "*"
 tandem-rng = { path = ".", editable = true }
 
 [tasks]
-test = "pytest"
-bench = "python tools/bench.py"
+build = "python setup.py build_ext --inplace"
+test = { cmd = "pytest", depends-on = ["build"] }
+bench = { cmd = "python tools/bench.py", depends-on = ["build"] }

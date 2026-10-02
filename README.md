@@ -55,18 +55,19 @@ CI fails when the vendored C sources or the vectors drift from upstream. `tools/
 ## Speed
 
 Apple M4, one thread, `pixi run bench`, 2^24 Float64 draws, minimum of seven runs, load
-average 4.4 during the run:
+average 2.8 during the run:
 
 | | GiB/s |
 |---|---|
-| `Tandem(42).random(out=buf)`, preallocated | 12.0 |
-| `Tandem(42).random(n)`, new array each call | 7.4 |
-| `Generator(Tandem(42)).random(n)` | 3.3 |
-| `Generator(PCG64(42)).random(n)` | 2.1 |
+| `Tandem(42).random(out=buf)`, preallocated | 13.5 |
+| `Tandem(42).random(n)`, new array each call | 9.1 |
+| `Generator(Tandem(42)).random(n)` | 4.4 |
+| `Generator(PCG64(42)).random(n)` | 2.5 |
 
 The preallocated fill is the C fill with the GIL released. The allocating row pays for a
 fresh 128 MiB array and its page faults on every call. The two `Generator` rows go through
-NumPy's per-element `next_double` call, which is where the time goes for any BitGenerator.
+NumPy's per-element `next_double` call, which bounds any BitGenerator. The hooks fill a
+buffer of 1024 words at a time, with the stream's alignment rules kept for mixed widths.
 
 ## License
 

@@ -166,3 +166,33 @@ def test_out_argument():
         rng.random(out=np.empty((2, 5)))
     with pytest.raises(ValueError):
         rng.random(5, out=np.empty(6))
+
+
+def test_generator_draws_match_spec_alignment():
+    # The buffered hooks must read the same bits as the fills for any mix of widths.
+    ref = Tandem(42)
+    words = ref.raw(4096, np.uint32)
+    gen = Generator(Tandem(42))
+    got = gen.integers(0, 2**32, size=4096, dtype=np.uint32, endpoint=False)
+    assert np.array_equal(got, words)
+
+    t = Tandem(42)
+    gen = Generator(t)
+    a = gen.integers(0, 2**32, size=3, dtype=np.uint32)  # words 0, 1, 2: one pending half
+    assert t.position == 96
+    b = t.raw(1, np.uint64)  # aligns to 128, so word 3 is skipped
+    assert t.position == 192
+    assert np.array_equal(a, words[:3]) and b[0] == ref_u64(words, 4)
+    c = gen.random()  # next_double: aligned read at 192
+    assert c == (ref_u64(words, 6) >> 11) * 2.0**-53
+    assert t.position == 256
+    d = gen.integers(0, 2**32, size=1, dtype=np.uint32)[0]  # word 8
+    assert d == words[8]
+    t.raw(1, np.uint8)  # byte at 288, position 296
+    e = gen.integers(0, 2**32, size=2, dtype=np.uint32)  # aligns to 320: words 10 and 11
+    assert np.array_equal(e, words[10:12])
+    assert t.position == 384
+
+
+def ref_u64(words, i):
+    return int(words[i]) | int(words[i + 1]) << 32

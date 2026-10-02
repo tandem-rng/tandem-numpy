@@ -3,9 +3,9 @@
 # tandem-numpy
 
 NumPy `BitGenerator` for [Tandem8x32](https://github.com/tandem-rng/spec), a noncryptographic
-pseudorandom number generator built to be fast on CPUs and GPUs alike. It wraps the C
-reference [tandem-c](https://github.com/tandem-rng/tandem-c) and produces the same stream, bit
-for bit, as the Julia reference [TandemRNG.jl](https://github.com/tandem-rng/TandemRNG.jl).
+pseudorandom number generator built to be fast on CPUs and GPUs alike. It wraps a vendored
+copy of the reference C implementation and produces the stream the specification defines, bit
+for bit.
 
 ## Use
 
@@ -28,14 +28,13 @@ t.key, t.position, t.chunk_length      # transport form
 
 `Tandem(seed, K=32)` accepts an integer seed in `[0, 2**128)`, a `SeedSequence`, or `None`
 for OS entropy. An integer goes through the specification's seed whitening, so `Tandem(42)`
-produces the stream of Julia `Tandem8x32(42)` and C `tandem_seed(42, 0, 32)`. A
+produces the specification's stream for seed 42. A
 `SeedSequence` or `None` reduces to 128 bits that are treated as the integer seed.
 `Tandem.from_key(key, position, K)` takes the transport form directly.
 
 NumPy's `Generator.random()` computes `(next_uint64 >> 11) * 2**-53` and
 `random(dtype=np.float32)` computes `(next_uint32 >> 8) * 2**-24`. Both are the
-specification's own mappings, so `Generator(Tandem(42)).random(n)` equals `Tandem(42).random(n)`
-and the Julia `rand(Tandem8x32(42), Float64, n)`. The `state` property is a dict of
+specification's own mappings, so `Generator(Tandem(42)).random(n)` equals `Tandem(42).random(n)`. The `state` property is a dict of
 `key`, `position`, and `K`, and pickling goes through it.
 
 ## Install
@@ -50,9 +49,8 @@ an environment with the package installed editable, and `pixi run test` runs the
 ## Tests
 
 `tests/test_tandem.py` checks every vector of the specification (`tests/vectors.json`, a copy
-of the spec repository's file) and compares fills and scalar draws with dumps written by
-TandemRNG.jl (`tests/data`, shared with tandem-c). CI fails when the vendored C sources or
-the vectors drift from their upstream repositories. `tools/sync_c.sh` refreshes the C sources.
+of the spec repository's file) and compares fills and scalar draws with reference stream dumps in `tests/data`.
+CI fails when the vendored C sources or the vectors drift from upstream. `tools/sync_c.sh` refreshes the C sources.
 
 ## Speed
 
@@ -65,7 +63,6 @@ average 4.4 during the run:
 | `Tandem(42).random(n)`, new array each call | 7.4 |
 | `Generator(Tandem(42)).random(n)` | 3.3 |
 | `Generator(PCG64(42)).random(n)` | 2.1 |
-| C `tandem_fill_f64`, from the tandem-c README | 11.3 |
 
 The preallocated fill is the C fill with the GIL released. The allocating row pays for a
 fresh 128 MiB array and its page faults on every call. The two `Generator` rows go through

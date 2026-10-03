@@ -3,9 +3,8 @@
 # tandem-numpy
 
 NumPy `BitGenerator` for [Tandem8x32](https://github.com/tandem-rng/spec), a noncryptographic
-pseudorandom number generator built to be fast on CPUs and GPUs alike. It wraps a vendored
-copy of the reference C implementation and produces the stream the specification defines, bit
-for bit.
+pseudorandom number generator built to be fast on CPUs and GPUs alike. It wraps the reference C
+implementation and produces the stream the specification defines, bit for bit.
 
 ## Use
 
@@ -43,6 +42,10 @@ specification's own mappings, so `Generator(Tandem(42)).random(n)` equals `Tande
 pip install .
 ```
 
+The reference C implementation sits in the `external/tandem-c` git submodule. Clone with
+`git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone.
+GitHub's ZIP download omits submodules and does not build.
+
 The build uses meson-python and needs a C compiler. For development, `pixi install` creates an
 environment with the package installed editable, which rebuilds the extension on import when
 the sources change, and `pixi run test` runs the tests.
@@ -51,7 +54,8 @@ the sources change, and `pixi run test` runs the tests.
 
 `tests/test_tandem.py` checks every vector of the specification (`tests/vectors.json`, a copy
 of the spec repository's file) and compares fills and scalar draws with reference stream dumps in `tests/data`.
-CI fails when the vendored C sources or the vectors drift from upstream. `tools/sync_c.sh` refreshes the C sources.
+CI fails when the vectors drift from upstream or the tandem-c pin is not on tandem-c main.
+`tools/bump.sh` moves the pin to the latest main.
 
 ## Speed
 

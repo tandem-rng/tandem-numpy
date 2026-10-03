@@ -1,0 +1,3 @@
+[submodule "external/tandem-c"]
+	path = external/tandem-c
+	url = https://github.com/tandem-rng/tandem-c

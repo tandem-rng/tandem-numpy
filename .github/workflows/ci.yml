@@ -19,17 +19,20 @@ jobs:
         python: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: true
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
       - run: pip install . pytest
       - run: pytest
-  vendored-c:
-    name: vendored C and vectors are current
+  tandem-c-pin:
+    name: tandem-c pin is on upstream main, vectors are current
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: git clone --depth 1 https://github.com/tandem-rng/tandem-c ../tandem-c
-      - run: diff ../tandem-c/tandem.c src/tandem_rng/c/tandem.c && diff ../tandem-c/tandem.h src/tandem_rng/c/tandem.h
+        with:
+          submodules: true
+      - run: git -C external/tandem-c fetch origin main && git -C external/tandem-c merge-base --is-ancestor HEAD origin/main
       - run: git clone --depth 1 https://github.com/tandem-rng/spec ../spec
       - run: diff ../spec/vectors.json tests/vectors.json

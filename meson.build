@@ -20,8 +20,8 @@ endif
 py.install_sources(['src/tandem_rng/__init__.py'], subdir: 'tandem_rng')
 py.extension_module(
   '_tandem',
-  ['src/tandem_rng/_tandem.pyx', 'src/tandem_rng/c/tandem.c'],
-  include_directories: ['src/tandem_rng/c'],
+  ['src/tandem_rng/_tandem.pyx', 'external/tandem-c/tandem.c'],
+  include_directories: ['external/tandem-c'],
   dependencies: [numpy_dep],
   c_args: ['-DNPY_NO_DEPRECATED_API=NPY_2_0_API_VERSION'],
   install: true,

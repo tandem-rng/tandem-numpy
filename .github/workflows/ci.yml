@@ -33,6 +33,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: true
+          # A shallow submodule has no history between the pin and main.
+          fetch-depth: 0
       - run: git -C external/tandem-c fetch origin main && git -C external/tandem-c merge-base --is-ancestor HEAD FETCH_HEAD
       - run: git clone --depth 1 https://github.com/tandem-rng/spec ../spec
       - run: diff ../spec/vectors.json tests/vectors.json

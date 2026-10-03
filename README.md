@@ -59,9 +59,9 @@ Apple M4, one thread, `pixi run bench`, 2^24 Float64 draws, minimum of seven run
 
 | | GiB/s |
 |---|---|
-| `Tandem(42).random(out=buf)`, preallocated | 15.8 |
-| `Tandem(42).random(n)`, new array each call | 10.6 |
-| `Generator(Tandem(42)).random(n)` | 4.3 |
+| `Tandem(42).random(out=buf)`, preallocated | 17.9 |
+| `Tandem(42).random(n)`, new array each call | 11.1 |
+| `Generator(Tandem(42)).random(n)` | 4.5 |
 | `Generator(PCG64(42)).random(n)` | 2.5 |
 
 The preallocated fill is the C fill with the GIL released. The allocating row pays for a

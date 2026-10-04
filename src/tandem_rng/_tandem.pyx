@@ -15,8 +15,11 @@ cdef extern from "stdbool.h":
     ctypedef unsigned char c_bool "bool"
 
 cdef extern from "tandem.h":
+    # Opaque: tandem.h owns the layout and marks every field private.
     ctypedef struct tandem_rng:
-        uint64_t pos
+        pass
+    ctypedef struct tandem_u128:
+        pass
     tandem_rng tandem_from_key(const uint32_t key[4], uint64_t pos, uint32_t K) nogil
     tandem_rng tandem_seed(uint64_t seed_lo, uint64_t seed_hi, uint32_t K) nogil
     void tandem_key(const tandem_rng *rng, uint32_t key[4]) nogil
@@ -26,8 +29,6 @@ cdef extern from "tandem.h":
     uint64_t tandem_next_u64(tandem_rng *rng) nogil
     double tandem_next_f64(tandem_rng *rng) nogil
     void tandem_fill_bool(tandem_rng *rng, c_bool *out, size_t n) nogil
-    ctypedef struct tandem_u128:
-        uint64_t lo, hi
     void tandem_fill_u128(tandem_rng *rng, tandem_u128 *out, size_t n) nogil
     void tandem_fill_f16_bits(tandem_rng *rng, uint16_t *out, size_t n) nogil
     void tandem_fill_char(tandem_rng *rng, uint32_t *out, size_t n) nogil
@@ -103,8 +104,11 @@ cdef inline uint64_t logical_position(buffered *b) noexcept nogil:
     return tandem_position(&b.rng) - 64 * b.left - (32 if b.has_pending else 0)
 
 cdef inline void flush(buffered *b) noexcept nogil:
-    # Put the C generator at the position the buffered draws have reached.
-    b.rng.pos = logical_position(b)
+    # Put the C generator at the position the buffered draws have reached. Setting the
+    # position drops the C row cache, so skip it when nothing is buffered.
+    if b.left == 0 and not b.has_pending:
+        return
+    tandem_set_position(&b.rng, logical_position(b))
     b.left = 0
     b.has_pending = False
 

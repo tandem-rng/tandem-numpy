@@ -27,7 +27,9 @@ class TandemGenerator(Generator):
     ``TandemGenerator(seed, K=32)`` takes what ``Tandem`` takes, or a ``Tandem`` instance.
     ``random``, ``uniform``, ``standard_normal``, ``normal`` and ``integers`` return the
     values of Appendix A of the specification, which every Tandem port returns, and run at
-    the speed of the C fills. They are not NumPy's ziggurat and Lemire values:
+    the speed of the C fills. ``standard_exponential`` and ``exponential`` return Tandem's
+    inversion values, ``-ln(1 - u)`` with the same bits in every Tandem port, for float64 and
+    float32, and ignore ``method``. They are not NumPy's ziggurat and Lemire values:
     ``Generator(Tandem(seed))`` keeps NumPy's algorithms over the same stream. Every other
     method falls through to NumPy and reads the bit generator one value at a time.
 
@@ -64,6 +66,13 @@ class TandemGenerator(Generator):
     def standard_normal(self, size=None, dtype=np.float64, out=None):
         return self._fill_into(self.bit_generator.normal, size, dtype, out)
 
+    def standard_exponential(self, size=None, dtype=np.float64, method="zig", out=None):
+        # The values are the inversion -ln(1 - u) whatever ``method`` says: "zig" is only
+        # NumPy's default, kept so that calls written for Generator still run.
+        if method not in ("zig", "inv"):
+            raise ValueError("Unknown method. Must be 'zig' or 'inv'")
+        return self._fill_into(self.bit_generator.exponential, size, dtype, out)
+
     def uniform(self, low=0.0, high=1.0, size=None):
         low, high = np.asarray(low, np.float64), np.asarray(high, np.float64)
         shape = np.broadcast(low, high).shape if size is None else size
@@ -78,6 +87,15 @@ class TandemGenerator(Generator):
         shape = np.broadcast(loc, scale).shape if size is None else size
         z = self.standard_normal(shape if shape != () else None)
         r = loc + scale * z
+        return r[()] if size is None and np.ndim(r) == 0 else r
+
+    def exponential(self, scale=1.0, size=None):
+        scale = np.asarray(scale, np.float64)
+        if (scale < 0).any():
+            raise ValueError("scale < 0")
+        shape = scale.shape if size is None else size
+        e = self.standard_exponential(shape if shape != () else None)
+        r = scale * e
         return r[()] if size is None and np.ndim(r) == 0 else r
 
     def integers(self, low, high=None, size=None, dtype=np.int64, endpoint=False):

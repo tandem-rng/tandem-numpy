@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import re
 import pickle
 from pathlib import Path
@@ -611,6 +612,94 @@ def test_standard_normal_bits_match_tandem_c():
     assert h.hexdigest() == "cfae418807a7d5f91ecd3e42c33a00943690c6e4b888ee39206738783efe9ded"
 
 
+def cross_exponential(table, dtype):
+    """(start, want, end_pos) per case of one floating-point table in cross_exponential.h."""
+    text = (C_TESTS / "cross_exponential.h").read_text()
+    body = text.split(f"}} {table}[] = {{")[1].split("\n};")[0]
+    return [
+        (int(start), np.array(re.findall(r"[-+]?\d[\d.]*(?:e[-+]?\d+)?", want), dtype), int(end))
+        for start, want, end in re.findall(r"\{(\d+)ull,\s*\{([^}]*)\},\s*(\d+)u\}", body)
+    ]
+
+
+@pytest.mark.parametrize("dtype, table", [(np.float64, "CROSS_EXPONENTIAL"), (np.float32, "CROSS_EXPONENTIALF")])
+def test_exponential_matches_tandem_c_fixtures(dtype, table):
+    # The same bits as tandem-c's tests/test_api.c checks with memcmp, from the Tandem fill
+    # and through TandemGenerator.
+    cases = cross_exponential(table, dtype)
+    assert len(cases) == 5
+    for start, want, end in cases:
+        rng = at_position(start)
+        got = rng.exponential(want.size, dtype)
+        assert got.tobytes() == want.tobytes() and rng.position == end
+        g = TandemGenerator(Tandem(42))
+        g.bit_generator.position = start
+        assert g.standard_exponential(want.size, dtype).tobytes() == want.tobytes()
+        assert g.bit_generator.position == end
+
+
+def test_standard_exponential_bits_match_tandem_c():
+    # The bytes of tandem-c's tools/dump_exponentials.c: 1e6 f64 then 1e6 f32 from five
+    # positions, FNV-1a 0x47f8f98297d94ee2 there and SHA-256 here.
+    h = hashlib.sha256()
+    for start in (0, 1, 77, 12345, 1 << 30):
+        g = TandemGenerator(Tandem(2026 + (7 << 64)))
+        g.bit_generator.position = start
+        h.update(g.standard_exponential(1_000_000).tobytes())
+        h.update(g.standard_exponential(1_000_000, np.float32).tobytes())
+    assert h.hexdigest() == "5c035a4ef1368231d25a9c2f9201be2df3224e28a14549a50625d0db3770ef4e"
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.float32])
+def test_exponential_fill_is_scalars_cuts_and_empty(dtype):
+    n, cuts = 3000, (1, 7, 1000, 1024, 2049)
+    whole = unaligned(7)
+    want = whole.exponential(n, dtype)
+    scalar = unaligned(7)
+    assert np.array_equal([scalar.exponential(dtype=dtype) for _ in range(n)], want)
+    assert scalar.position == whole.position
+    for cut in cuts:
+        rng = unaligned(7)
+        got = np.concatenate([rng.exponential(cut, dtype), rng.exponential(n - cut, dtype)])
+        assert np.array_equal(got, want) and rng.position == whole.position
+    rng = unaligned(7)
+    assert rng.exponential(0, dtype).size == 0 and rng.position == unaligned(7).position
+
+
+def test_generator_exponential_routes_the_fills():
+    g, ref = pair(8, 9)
+    assert np.array_equal(g.standard_exponential(100), ref.exponential(100))
+    assert np.array_equal(g.standard_exponential(50, np.float32, "inv"), ref.exponential(50, np.float32))
+    assert np.array_equal(g.exponential(2.5, 100), 2.5 * ref.exponential(100))
+    buf, strided = np.empty((4, 5)), np.empty(40, np.float32)[::2]
+    assert g.standard_exponential(out=buf) is buf and np.array_equal(buf.ravel(), ref.exponential(20))
+    g.standard_exponential(dtype=np.float32, out=strided)
+    assert np.array_equal(strided, ref.exponential(20, np.float32))
+    assert isinstance(g.exponential(), float) and g.exponential(np.ones(4), (3, 4)).shape == (3, 4)
+    with pytest.raises(ValueError):
+        g.exponential(-1)
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.float32])
+def test_exponential_follows_the_standard_law(dtype):
+    # Exp(1) has E[x^k] = k! and Var[x^k] = (2k)! - (k!)^2: each moment must lie within
+    # five standard errors, and the Kolmogorov-Smirnov statistic must not reject Exp(1).
+    n = 10_000_000
+    x = Tandem(11).exponential(n, dtype)
+    assert x.min() >= 0
+    for k in range(1, 5):
+        fact, fact2 = math.factorial(k), math.factorial(2 * k)
+        m = np.mean(x.astype(np.float64) ** k)
+        assert abs(m - fact) < 5 * math.sqrt(fact2 - fact**2) / math.sqrt(n)
+    # SciPy is not a test dependency: the statistic is computed here, and sqrt(n) D < 1.95 is
+    # the asymptotic 0.1% critical value.
+    x = np.sort(x).astype(np.float64)
+    cdf = -np.expm1(-x)
+    i = np.arange(1, n + 1)
+    d = max(np.max(i / n - cdf), np.max(cdf - (i - 1) / n))
+    assert math.sqrt(n) * d < 1.95
+
+
 def test_generator_out_and_dtype_paths():
     g, ref = pair(8, 9)
     buf = np.empty((4, 5))
@@ -632,11 +721,12 @@ def test_generator_falls_through_and_differs_from_numpy_algorithms():
     g = TandemGenerator(7)
     plain = Generator(Tandem(7))
     assert np.array_equal(g.permutation(20), plain.permutation(20))
-    assert np.array_equal(g.exponential(size=5), plain.exponential(size=5))
+    assert np.array_equal(g.gamma(2.0, size=5), plain.gamma(2.0, size=5))
     assert g.choice(10, 3).shape == (3,)
     a, b = TandemGenerator(7), Generator(Tandem(7))
     assert np.array_equal(a.random(50), b.random(50))
     assert not np.array_equal(a.standard_normal(50), b.standard_normal(50))
+    assert not np.array_equal(a.standard_exponential(50), b.standard_exponential(50))
     assert not np.array_equal(a.integers(0, 0xC0000001, 200, np.uint32), b.integers(0, 0xC0000001, 200, np.uint32))
 
 

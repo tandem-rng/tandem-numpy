@@ -25,12 +25,13 @@ t.u128(1000)                           # (1000, 2) uint64 rows: low and high hal
 t.char(1000)                           # Unicode scalar values as uint32
 t.below(10, 1000)                      # Tandem's bounded integers on [0, 10), uint64
 t.normal(1000, np.float32)             # Tandem's Box-Muller normals
+t.exponential(1000)                    # Tandem's standard exponentials, float64 or float32
 worker = t.split(7)                    # by index, from the key alone
 kids = t.fork(4)                       # from the current block, parent moves on
 sub = t.sub(3)                         # by purpose identifier
 streams = Generator(t).spawn(4)        # Generators over t.split(0) .. t.split(3)
 g = TandemGenerator(42)                # NumPy Generator with Tandem's own samplers, fast
-g.standard_normal(10**6); g.integers(0, 1000, 10**6)
+g.standard_normal(10**6); g.integers(0, 1000, 10**6); g.standard_exponential(10**6)
 t.key, t.position, t.chunk_length      # transport form
 t.at(np.float64, 10**12)               # random access: element i of the next fill
 t.advance_to(2**40)                    # seek to a bit position, same as t.position = 2**40
@@ -55,10 +56,11 @@ specification's draws of its dtype, through the C fills with the GIL released. I
 `u128(size)` returns the same words as `(size, 2)` `uint64` rows and `char(size)` returns Unicode
 scalar values as `uint32`. `random` and `raw` are unchanged.
 
-`below(n, size, dtype)` and `normal(size, dtype)` are Tandem's own bounded-integer and normal
-contracts, taken from tandem-c and tandem-cuda and not part of the specification. They are not
-`Generator.integers` and `Generator.standard_normal`, which keep NumPy's algorithms over the bit
-generator and give different values.
+`below(n, size, dtype)`, `normal(size, dtype)`, and `exponential(size, dtype)` are Tandem's own
+bounded-integer, normal, and exponential contracts, taken from tandem-c and tandem-cuda and not
+part of the specification. They are not `Generator.integers`, `Generator.standard_normal`, and
+`Generator.standard_exponential`, which keep NumPy's algorithms over the bit generator and give
+different values.
 
 - `below` draws on `[0, n)` by Lemire's multiply-and-reject over `uint32` or `uint64` draws
   (`dtype`, default `uint64`). With `size` or `out` it draws element `i` from stream draw `i`
@@ -73,9 +75,16 @@ generator and give different values.
   and consumes two uniforms, so it equals element 0 of a fill. Values
   agree with other ports to about `1e-12` relative for `float64` and a few ulps for `float32`,
   because libm differs.
+- `exponential` draws `-ln(1 - u)` from one uniform `u` of the dtype per element, `float64` from
+  `float64` uniforms in double and `float32` from `float32` uniforms in single, with the
+  polynomial logarithm of the normals and no libm call. Element `i` comes from uniform `i`, so a
+  fill equals the scalar draws, a fill cut at any element boundary equals the whole fill, and
+  `n = 0` leaves the position unchanged. The bits are the same in every Tandem port and on every
+  compiler.
 
 `TandemGenerator(seed, K=32)` is a `numpy.random.Generator` over `Tandem` that overrides
-`random`, `uniform`, `standard_normal`, `normal`, and `integers` with the C fills, with NumPy's
+`random`, `uniform`, `standard_normal`, `normal`, `standard_exponential`, `exponential`, and
+`integers` with the C fills, with NumPy's
 signatures, `dtype`, `size`, `out`, and `endpoint` handling. Its values are the cross-port ones
 of Appendix A: Tandem's pair normals and Lemire integers with the fallback stream, equal in every
 Tandem port, and they run at the speed of the fills. `Generator(Tandem(seed))` is the other
@@ -83,7 +92,9 @@ choice: it keeps NumPy's ziggurat and Lemire code over the same stream, so its n
 Every method that `TandemGenerator` does not override falls through to NumPy and reads the bit
 generator one value at a time. The overridden methods move the shared bit generator exactly as
 the matching `Tandem` fills do, and `normal` and `uniform` are `loc + scale * standard_normal`
-and `low + (high - low) * random`. `integers` takes the draw width from the range, 32-bit words
+and `low + (high - low) * random`. `exponential(scale)` is `scale * standard_exponential`, and
+`standard_exponential` ignores `method`, since its values are the inversion `-ln(1 - u)` whatever
+the name. `integers` takes the draw width from the range, 32-bit words
 when the range is at most `2**32` and 64-bit words otherwise, as the specification says, so the
 dtype does not change the values: `int64` with a small range uses the `uint32` bounded fill and
 widens. It supports `bool`, and array-valued bounds fall through to NumPy's own `integers`. NumPy's
@@ -115,7 +126,7 @@ The reference C implementation sits in the `external/tandem-c` git submodule. Cl
 `git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone.
 GitHub's ZIP download omits submodules and does not build.
 
-The submodule is pinned at tandem-c `8f1f057`. The extension is built with `-ffp-contract=off` and no
+The submodule is pinned at tandem-c `b049384`. The extension is built with `-ffp-contract=off` and no
 `-mfma`: the normal loop uses explicit fused multiply-adds, so its bits do not depend on the
 compiler, and on x86 the AVX2 and FMA copy is chosen at run time, also in a wheel built for a
 baseline x86-64.
@@ -130,12 +141,15 @@ the sources change, and `pixi run test` runs the tests.
 of the spec repository's file) and compares fills and scalar draws with reference stream dumps in `tests/data`.
 The new paths are checked the same way: `fill`, `u128`, and `char` against the dumps of every
 specification type, `at` and `advance_to` against the dumps and against fills from the same
-position, `spawn` against `split`, and `below` and `normal` against the tandem-cuda fixtures in
-`external/tandem-c/tests` (`cross_below.h`, `cross_fill_below.h`, `cross_normal.h`), which the test
-parses. `TandemGenerator` is checked against the same fills and fixtures, including `integers` calls of every dtype, with and without `endpoint`, cut at arbitrary
+position, `spawn` against `split`, and `below`, `normal`, and `exponential` against the tandem-cuda
+fixtures in `external/tandem-c/tests` (`cross_below.h`, `cross_fill_below.h`, `cross_normal.h`,
+`cross_exponential.h`), which the test parses. The exponential fixtures must match bit for bit. `TandemGenerator` is checked against the same fills and fixtures, including `integers` calls of every dtype, with and without `endpoint`, cut at arbitrary
 boundaries against the whole call. A hash test compares the `standard_normal` float64 and float32
 fills with the bytes of tandem-c's `tools/dump_normals.c` (FNV-1a `0x9414e1315e2653be`, checked here
-as SHA-256), so they are the same bits on every compiler.
+as SHA-256), so they are the same bits on every compiler. The `standard_exponential` fills have the
+same test against `tools/dump_exponentials.c` (FNV-1a `0x47f8f98297d94ee2`). Fills cut at element
+boundaries, `n = 0`, the Exp(1) moments to fourth order, and a Kolmogorov-Smirnov test on 10^7
+draws cover the rest.
 CI fails when the vectors drift from upstream or the tandem-c pin is not on tandem-c main.
 `tools/bump.sh` moves the pin to the latest main.
 
@@ -152,10 +166,12 @@ output. Every call allocates its array.
 | `integers(0, 1000)` int64 | 7.5 | 12.7 | 5.9 | 4.5 |
 | `standard_normal` float64 | 4.9 | 4.9 | 2.2 | 2.0 |
 | `standard_normal` float32 | 5.5 | 5.5 | 1.1 | 1.5 |
+| `standard_exponential` float64 | 6.0 | 6.0 | 3.8 | 2.0 |
+| `standard_exponential` float32 | 6.6 | 6.6 | 1.2 | 1.3 |
 | raw `uint64` words | 18.6 | - | 4.9 | 2.4 |
 
 The Tandem column calls the C fills of the bit generator with the GIL released: `random`,
-`below(1000, n, dtype)` at the dtype's width, `normal`, and `raw`. `TandemGenerator` routes the sampler names through
+`below(1000, n, dtype)` at the dtype's width, `normal`, `exponential`, and `raw`. `TandemGenerator` routes the sampler names through
 the same fills. The plain `Generator` columns are NumPy's own samplers: `Generator` calls the bit
 generator one value at a time, through `next_double`, `next_uint32`, and `next_uint64`, and runs
 its own ziggurat for normals and its own Lemire method for integers. Its speed is bounded by

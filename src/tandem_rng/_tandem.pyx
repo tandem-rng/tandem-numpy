@@ -41,6 +41,8 @@ cdef extern from "tandem.h":
     void tandem_fill_u64_below(tandem_rng *rng, uint64_t *out, size_t len, uint64_t n) nogil
     void tandem_fill_normal_f64(tandem_rng *rng, double *out, size_t n) nogil
     void tandem_fill_normal_f32(tandem_rng *rng, float *out, size_t n) nogil
+    void tandem_fill_exponential_f64(tandem_rng *rng, double *out, size_t n) nogil
+    void tandem_fill_exponential_f32(tandem_rng *rng, float *out, size_t n) nogil
     void tandem_fill_u8(tandem_rng *rng, uint8_t *out, size_t n) nogil
     void tandem_fill_u16(tandem_rng *rng, uint16_t *out, size_t n) nogil
     void tandem_fill_u32(tandem_rng *rng, uint32_t *out, size_t n) nogil
@@ -406,6 +408,28 @@ cdef class Tandem(BitGenerator):
         else:
             with nogil:
                 tandem_fill_normal_f32(&self.st.rng, <float *>p, n)
+        return a[()] if size is None and out is None else a
+
+    def exponential(self, size=None, dtype=np.float64, out=None):
+        """Standard exponential draws -ln(1 - u) by Tandem's own contract.
+
+        Element i comes from uniform i of the stream's fill of ``dtype``, computed in that
+        dtype with the polynomial logarithm of the normals. A fill equals the scalar draws
+        and consumes one uniform per element. This matches tandem-c and tandem-cuda bit for
+        bit and is not part of the specification. It is not
+        ``numpy.random.Generator.standard_exponential``, which keeps NumPy's ziggurat over
+        this bit generator.
+        """
+        cdef np.ndarray a = _buffer(size, dtype, out, (np.float64, np.float32))
+        cdef void *p = np.PyArray_DATA(a)
+        cdef size_t n = a.size
+        flush(&self.st)
+        if a.dtype == np.float64:
+            with nogil:
+                tandem_fill_exponential_f64(&self.st.rng, <double *>p, n)
+        else:
+            with nogil:
+                tandem_fill_exponential_f32(&self.st.rng, <float *>p, n)
         return a[()] if size is None and out is None else a
 
     cdef void _fill(self, np.ndarray a, int code, size_t n):

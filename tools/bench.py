@@ -43,6 +43,10 @@ rows = [
      lambda: gp.standard_normal(N)),
     ("standard_normal float32", 4, lambda: t.normal(N, f32), lambda: tg.standard_normal(N, f32), lambda: gt.standard_normal(N, f32),
      lambda: gp.standard_normal(N, f32)),
+    ("standard_exponential float64", 8, lambda: t.exponential(N), lambda: tg.standard_exponential(N),
+     lambda: gt.standard_exponential(N), lambda: gp.standard_exponential(N)),
+    ("standard_exponential float32", 4, lambda: t.exponential(N, f32), lambda: tg.standard_exponential(N, f32),
+     lambda: gt.standard_exponential(N, f32), lambda: gp.standard_exponential(N, f32)),
     ("raw uint64 words", 8, lambda: t.raw(N), None, lambda: gt.bit_generator.random_raw(N),
      lambda: gp.bit_generator.random_raw(N)),
 ]

@@ -390,16 +390,22 @@ cdef class Tandem(BitGenerator):
         return a
 
     def normal(self, size=None, dtype=np.float64, out=None):
-        """Standard normal draws by Tandem's own Box-Muller contract.
+        """Standard normal draws by Appendix A of the specification.
 
-        Box-Muller on pairs of the stream's uniform draws a, b of ``dtype``: with
-        r = sqrt(-2 ln(1 - a)) the pair is (r cos 2 pi b, r sin 2 pi b). Pair j makes
-        elements 2j (cos half) and 2j + 1 (sin half) from uniforms 2j and 2j + 1. An odd
-        ``size`` keeps the cos half of its last pair and still consumes both uniforms. A
-        scalar draw is the cos half and consumes two uniforms, so it equals element 0 of a
-        fill. The values are the bits of tandem-c's normal fills, on every compiler. It is not
-        ``numpy.random.Generator.standard_normal``, which keeps its own ziggurat over this bit
-        generator.
+        float64: the 1024-layer ziggurat, element i from 64-bit draw i, so a fill equals the
+        scalar draws and a fill cut anywhere equals the whole fill. A draw outside the inner
+        rectangles continues on a fallback stream keyed by its global draw index. An empty
+        fill aligns the position to 64.
+
+        float32: Box-Muller on pairs of float32 uniforms a, b: with r = sqrt(-2 ln(1 - a)) the
+        pair is (r cos 2 pi b, r sin 2 pi b). Pair j makes elements 2j (cos half) and 2j + 1
+        (sin half) from uniforms 2j and 2j + 1. An odd ``size`` keeps the cos half of its last
+        pair and still consumes both uniforms. A scalar draw is the cos half and consumes two
+        uniforms.
+
+        The values are the bits of tandem-c's normal fills on every compiler. It is not
+        ``numpy.random.Generator.standard_normal``, which keeps NumPy's own ziggurat over this
+        bit generator.
         """
         cdef np.ndarray a = _buffer(size, dtype, out, (np.float64, np.float32))
         cdef void *p = np.PyArray_DATA(a)

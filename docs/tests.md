@@ -21,9 +21,10 @@ The new paths are checked the same way: `fill`, `u128`, and `char` against the d
 specification type, `at` and `advance_to` against the dumps and against fills from the same
 position, `spawn` against `split`, and `below`, `normal`, and `exponential` against the tandem-cuda
 fixtures in `external/tandem-c/tests` (`cross_below.h`, `cross_fill_below.h`, `cross_normal.h`,
-`cross_exponential.h`), which the test parses. The exponential fixtures must match bit for bit. `TandemGenerator` is checked against the same fills and fixtures, including `integers` calls of every dtype, with and without `endpoint`, cut at arbitrary
-boundaries against the whole call. A hash test compares the `standard_normal` float64 and float32
-fills with the bytes of tandem-c's `tools/dump_normals.c` (FNV-1a `0x9414e1315e2653be`, checked here
+`cross_exponential.h`), which the test parses. The normal and exponential fixtures must match bit for bit. `TandemGenerator` is checked against the same fills and fixtures, including `integers` calls of every dtype, with and without `endpoint`, cut at arbitrary
+boundaries against the whole call. A hash test compares the `standard_normal` float64 fills with
+the bytes of tandem-c's `tools/dump_normals.c` (SHA-256 `700ec4d2…`) and the float32 fills with
+the bytes tandem-c's `tests/test_normal_bits.c` hashes (FNV-1a `0xaa1ea656ce73a4fb`, checked here
 as SHA-256), so they are the same bits on every compiler. The `standard_exponential` fills have the
 same test against `tools/dump_exponentials.c` (FNV-1a `0x47f8f98297d94ee2`). Fills cut at element
 boundaries, `n = 0`, the Exp(1) moments to fourth order, and a Kolmogorov-Smirnov test on 10^7

@@ -40,7 +40,8 @@ t.advance_to(2**40)                    # seek to a bit position, same as t.posit
   `complex128`, `V16`) in any contiguous shape, GIL released.
 - `u128`, `char`: 128-bit words as `(size, 2)` `uint64` rows, and Unicode scalar values.
 - `below(n, size, dtype)`: bounded integers on `[0, n)`, one draw per element.
-- `normal`, `exponential`: Box-Muller normals and `-ln(1 - u)` exponentials, `float64` or `float32`.
+- `normal`, `exponential`: normals (ziggurat for `float64`, Box-Muller for `float32`) and
+  `-ln(1 - u)` exponentials, `float64` or `float32`.
 - `split`, `fork`, `sub`, `spawn`: child streams. `Generator.spawn` uses `split(0)`, `split(1)`, ...
 - `at(dtype, i)`, `advance_to(p)`, `position`, `key`, `chunk_length`, `state`: random access
   and transport. Pickling goes through `state`.
@@ -80,7 +81,7 @@ different values. [Design](design.md) gives the three contracts.
 `random`, `uniform`, `standard_normal`, `normal`, `standard_exponential`, `exponential`, and
 `integers` with the C fills, with NumPy's
 signatures, `dtype`, `size`, `out`, and `endpoint` handling. Its values are the cross-port ones
-of Appendix A: Tandem's pair normals and Lemire integers with the fallback stream, equal in every
+of Appendix A: Tandem's normals and Lemire integers with the fallback stream, equal in every
 Tandem port, and they run at the speed of the fills. `Generator(Tandem(seed))` is the other
 choice: it keeps NumPy's ziggurat and Lemire code over the same stream, so its normals differ.
 Every method that `TandemGenerator` does not override falls through to NumPy and reads the bit

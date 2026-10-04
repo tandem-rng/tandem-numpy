@@ -16,14 +16,14 @@ pip install ./tandem-numpy
 ```
 
 Needs Python 3.11, NumPy 2.0, a C compiler, and meson-python.
-The C code is the `external/tandem-c` submodule, pinned at tandem-c `b049384`.
+The C code is the `external/tandem-c` submodule, pinned at tandem-c `121db59`.
 For development, `pixi install` then `pixi run test`.
 
 The reference C implementation sits in the `external/tandem-c` git submodule. Clone with
 `git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone.
 GitHub's ZIP download omits submodules and does not build.
 
-The submodule is pinned at tandem-c `b049384`. The extension is built with `-ffp-contract=off` and no
+The submodule is pinned at tandem-c `121db59`. The extension is built with `-ffp-contract=off` and no
 `-mfma`: the normal loop uses explicit fused multiply-adds, so its bits do not depend on the
 compiler, and on x86 the AVX2 and FMA copy is chosen at run time, also in a wheel built for a
 baseline x86-64.
@@ -33,7 +33,7 @@ environment with the package installed editable, which rebuilds the extension on
 the sources change, and `pixi run test` runs the tests.
 
 
-Normals are bit exact with tandem-c since tandem-c `09615e0`, which the pin includes.
+Normals are bit exact with tandem-c.
 
 ## AI assistance
 

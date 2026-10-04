@@ -11,12 +11,18 @@ draws as the rejection loop needs. `n = 0` returns 0.
 
 ## Normals
 
-`normal` is Box-Muller on pairs of uniform draws `a`, `b` of the dtype: with
+`normal` with `float64` is the 1024-layer ziggurat of Appendix A. Element `i` comes from 64-bit
+draw `i`, so a fill equals the scalar draws and a fill cut at any element equals the whole fill.
+A draw outside the inner rectangles, about 0.4 % of them, continues on a fallback stream keyed
+by its global draw index. An empty fill aligns the position to 64.
+
+`normal` with `float32` is Box-Muller on pairs of `float32` uniforms `a`, `b`: with
 `r = sqrt(-2 ln(1 - a))` the pair is `(r cos 2 pi b, r sin 2 pi b)`. Pair `j` gives elements
 `2j` (cos half) and `2j + 1` (sin half) from uniforms `2j` and `2j + 1`. An odd `size` keeps
 the cos half of its last pair and still consumes both uniforms. A scalar draw is the cos half
-and consumes two uniforms, so it equals element 0 of a fill. The values are the bits of
-tandem-c's normal fills on every compiler.
+and consumes two uniforms, so it equals element 0 of a fill.
+
+The values of both are the bits of tandem-c's normal fills on every compiler.
 
 ## Exponentials
 

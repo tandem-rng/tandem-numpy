@@ -370,10 +370,23 @@ def cross_cases(header, name):
     ]
 
 
+FLOAT = r"[-+]?\d[\d.]*(?:e[-+]?\d+)?"
+
+
 def cross_floats(header, name):
     text = (C_TESTS / header).read_text()
     body = text.split(name + "[2 * CROSS_NORMAL_COUNT] = {")[1].split("};")[0]
-    return np.array([float(x) for x in re.findall(r"[-+]?\d[\d.]*(?:e[-+]?\d+)?", body)])
+    return np.array([float(x) for x in re.findall(FLOAT, body)])
+
+
+def cross_rows(header, table, dtype):
+    """(start, want, end_pos) per row {start, {values}, end_pos} of a floating-point table."""
+    text = (C_TESTS / header).read_text()
+    body = text.split(f"}} {table}[] = {{")[1].split("\n};")[0]
+    return [
+        (int(start), np.array(re.findall(FLOAT, want), dtype), int(end))
+        for start, want, end in re.findall(r"\{(\d+)ull,\s*\{([^}]*)\},\s*(\d+)u\}", body)
+    ]
 
 
 def cross_position(header, name):
@@ -425,32 +438,48 @@ def test_below_edges():
         rng.below(5, dtype=np.int64)
 
 
-def test_normal_matches_tandem_cuda():
-    # The fixtures are pairs, cos half first. A fill is the flattened pairs and a scalar draw
-    # is the cos half, so the scalars equal the even elements.
-    # The fixtures are bit exact since tandem-c 09615e0.
-    for dtype, table in ((np.float64, "CROSS_NORMAL"), (np.float32, "CROSS_NORMALF")):
-        want = cross_floats("cross_normal.h", table).astype(dtype)
-        end = cross_position("cross_normal.h", table + "_END_POS")
-        rng = unaligned()
-        assert rng.normal(want.size, dtype).tobytes() == want.tobytes() and rng.position == end
-        rng = unaligned()
-        got = np.array([rng.normal(dtype=dtype) for _ in want[::2]], dtype)
-        assert got.tobytes() == want[::2].tobytes() and rng.position == end
+def test_normal_f64_matches_tandem_c_ziggurat():
+    # Float64 ziggurat rows of tandem-c's cross_normal.h, with wedge and tail draws in the last
+    # rows. A fill equals the scalar draws, one 64-bit draw each.
+    cases = cross_rows("cross_normal.h", "CROSS_NORMAL", np.float64)
+    assert len(cases) == 6
+    for start, want, end in cases:
+        rng = at_position(start)
+        assert rng.normal(want.size).tobytes() == want.tobytes() and rng.position == end
+        rng = at_position(start)
+        got = np.array([rng.normal() for _ in want])
+        assert got.tobytes() == want.tobytes() and rng.position == end
 
 
-def test_normal_fill_pairs_and_out():
+def test_normal_f32_matches_tandem_cuda_pairs():
+    # Box-Muller pairs, cos half first. A fill is the flattened pairs and a scalar draw is the
+    # cos half, so the scalars equal the even elements.
+    want = cross_floats("cross_normal.h", "CROSS_NORMALF").astype(np.float32)
+    end = cross_position("cross_normal.h", "CROSS_NORMALF_END_POS")
+    rng = unaligned()
+    assert rng.normal(want.size, np.float32).tobytes() == want.tobytes() and rng.position == end
+    rng = unaligned()
+    got = np.array([rng.normal(dtype=np.float32) for _ in want[::2]], np.float32)
+    assert got.tobytes() == want[::2].tobytes() and rng.position == end
+
+
+def test_normal_fills_cut_odd_empty_and_out():
+    # Float64: element i from draw i, so a cut anywhere equals the whole fill, including the
+    # draws that leave the inner rectangles for their fallback stream (about 13 in 3000).
+    whole = unaligned(7)
+    want = whole.normal(3000)
+    for cut in (1, 2, 33, 1000, 2999):
+        rng = unaligned(7)
+        assert np.array_equal(np.concatenate([rng.normal(cut), rng.normal(3000 - cut)]), want)
+        assert rng.position == whole.position
+    # An empty float64 fill aligns the position to 64, as section 5 of the spec says.
+    rng = unaligned(7)
+    assert rng.normal(0).size == 0 and rng.position == 64
+    # Float32: an odd n drops the last sin half but still consumes both uniforms of its pair.
+    odd, even = unaligned(7), unaligned(7)
+    assert np.array_equal(odd.normal(7, np.float32), even.normal(8, np.float32)[:7])
+    assert odd.position == even.position
     for dtype in (np.float64, np.float32):
-        a, b = unaligned(7), unaligned(7)
-        got = a.normal(1000, dtype)
-        assert got.dtype == dtype
-        # Scalar draws are the cos halves, the even elements, two uniforms each.
-        assert np.array_equal(got[::2], [b.normal(dtype=dtype) for _ in range(500)])
-        assert a.position == b.position
-        # An odd n drops the last sin half but still consumes both uniforms of its pair.
-        odd, even = unaligned(7), unaligned(7)
-        assert np.array_equal(odd.normal(7, dtype), even.normal(8, dtype)[:7])
-        assert odd.position == even.position
         buf = np.empty(10, dtype)
         assert Tandem(2).normal(out=buf, dtype=dtype) is buf
 
@@ -597,11 +626,11 @@ def test_integers_match_cross_fixtures(dtype, table):
 
 
 def test_generator_normal_matches_cross_fixtures():
-    want = cross_floats("cross_normal.h", "CROSS_NORMAL")
-    g = TandemGenerator(Tandem(42))
-    g.bit_generator.position = 1
-    assert g.standard_normal(want.size).tobytes() == want.tobytes()
-    assert g.bit_generator.position == cross_position("cross_normal.h", "CROSS_NORMAL_END_POS")
+    for start, want, end in cross_rows("cross_normal.h", "CROSS_NORMAL", np.float64):
+        g = TandemGenerator(Tandem(42))
+        g.bit_generator.position = start
+        assert g.standard_normal(want.size).tobytes() == want.tobytes()
+        assert g.bit_generator.position == end
 
 
 @pytest.mark.parametrize("endpoint", [False, True])
@@ -624,34 +653,25 @@ def test_integers_cut_equals_whole(dtype, endpoint):
 
 
 def test_standard_normal_bits_match_tandem_c():
-    # The bytes tandem-c's tools/dump_normals.c writes: f64 then f32 fills of 2e6 - 1 values
-    # from five positions. Their FNV-1a hash is 0x9414e1315e2653be, recorded in
-    # tandem-c's tests/test_normal_bits.c. SHA-256 over the same bytes is checked here
-    # because a byte loop in Python is slow.
-    h = hashlib.sha256()
+    # The fills of tandem-c's tests/test_normal_bits.c from five positions: 1e6 float64, the
+    # bytes of tools/dump_normals.c with tandem-c's recorded SHA-256, and 2e6 - 1 float32, whose
+    # bytes have tandem-c's FNV-1a 0xaa1ea656ce73a4fb. A byte loop in Python is slow, so the
+    # float32 bytes are checked by their SHA-256.
+    h64, h32 = hashlib.sha256(), hashlib.sha256()
     for start in (0, 1, 77, 12345, 1 << 30):
-        g = TandemGenerator(Tandem(2026 + (7 << 64)))
-        g.bit_generator.position = start
-        h.update(g.standard_normal(2_000_000 - 1).tobytes())
-        h.update(g.standard_normal(2_000_000 - 1, np.float32).tobytes())
-    assert h.hexdigest() == "cfae418807a7d5f91ecd3e42c33a00943690c6e4b888ee39206738783efe9ded"
-
-
-def cross_exponential(table, dtype):
-    """(start, want, end_pos) per case of one floating-point table in cross_exponential.h."""
-    text = (C_TESTS / "cross_exponential.h").read_text()
-    body = text.split(f"}} {table}[] = {{")[1].split("\n};")[0]
-    return [
-        (int(start), np.array(re.findall(r"[-+]?\d[\d.]*(?:e[-+]?\d+)?", want), dtype), int(end))
-        for start, want, end in re.findall(r"\{(\d+)ull,\s*\{([^}]*)\},\s*(\d+)u\}", body)
-    ]
+        for h, n, dtype in ((h64, 1_000_000, np.float64), (h32, 2_000_000 - 1, np.float32)):
+            g = TandemGenerator(Tandem(2026 + (7 << 64)))
+            g.bit_generator.position = start
+            h.update(g.standard_normal(n, dtype).tobytes())
+    assert h64.hexdigest() == "700ec4d2f4d6b82aaa56c6eff18a4e5919585fdbd093988773383d580ea610d1"
+    assert h32.hexdigest() == "1550af62ffa8deaa44853976a037e91d543d85e8ac844925b27e2cf4488d7c7e"
 
 
 @pytest.mark.parametrize("dtype, table", [(np.float64, "CROSS_EXPONENTIAL"), (np.float32, "CROSS_EXPONENTIALF")])
 def test_exponential_matches_tandem_c_fixtures(dtype, table):
     # The same bits as tandem-c's tests/test_api.c checks with memcmp, from the Tandem fill
     # and through TandemGenerator.
-    cases = cross_exponential(table, dtype)
+    cases = cross_rows("cross_exponential.h", table, dtype)
     assert len(cases) == 5
     for start, want, end in cases:
         rng = at_position(start)

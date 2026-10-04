@@ -13,7 +13,7 @@ output. Every call allocates its array.
 | `random` float32 | 16.5 | 16.6 | 3.1 | 2.4 |
 | `integers(0, 1000)` int32 | 7.8 | 7.7 | 3.1 | 2.3 |
 | `integers(0, 1000)` int64 | 7.5 | 12.7 | 5.9 | 4.5 |
-| `standard_normal` float64 | 4.9 | 4.9 | 2.2 | 2.0 |
+| `standard_normal` float64 | 7.7 | 7.7 | 2.2 | 2.0 |
 | `standard_normal` float32 | 5.5 | 5.5 | 1.1 | 1.5 |
 | `standard_exponential` float64 | 6.0 | 6.0 | 3.8 | 2.0 |
 | `standard_exponential` float32 | 6.6 | 6.6 | 1.2 | 1.3 |

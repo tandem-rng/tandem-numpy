@@ -26,7 +26,10 @@ py.extension_module(
   ['src/tandem_rng/_tandem.pyx', 'external/tandem-c/tandem.c'],
   include_directories: ['external/tandem-c'],
   dependencies: [numpy_dep, libm],
-  c_args: ['-DNPY_NO_DEPRECATED_API=NPY_2_0_API_VERSION'],
+  # Contraction off keeps every product and sum outside the explicit fma calls unfused, so
+  # the normals are the same bits on every compiler. Do not add -mfma: tandem.c picks its
+  # AVX2 and FMA copy at run time.
+  c_args: ['-DNPY_NO_DEPRECATED_API=NPY_2_0_API_VERSION', '-ffp-contract=off'],
   install: true,
   subdir: 'tandem_rng',
 )

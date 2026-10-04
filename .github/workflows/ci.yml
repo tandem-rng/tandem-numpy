@@ -26,6 +26,26 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pip install . pytest
       - run: pytest
+  manylinux:
+    name: manylinux wheel picks AVX2 at run time
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Build, check the dispatch, test
+        run: |
+          docker run --rm -v "$PWD":/src -w /src quay.io/pypa/manylinux_2_28_x86_64 bash -ec '
+            PY=/opt/python/cp313-cp313/bin
+            $PY/pip wheel . --no-deps -w /tmp/wheels
+            auditwheel show /tmp/wheels/*.whl
+            mkdir /tmp/x && cd /tmp/x && $PY/python -m zipfile -e /tmp/wheels/*.whl .
+            # The baseline build has no AVX2 flag, so FMA instructions can only come from the
+            # run-time dispatched copy.
+            objdump -d tandem_rng/_tandem*.so | grep -c vfmadd
+            $PY/pip install /tmp/wheels/*.whl pytest
+            cd /src && $PY/python -m pytest -q --import-mode=importlib tests
+          '
   tandem-c-pin:
     name: tandem-c pin is on upstream main, vectors are current
     runs-on: ubuntu-latest

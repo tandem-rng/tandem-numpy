@@ -26,8 +26,9 @@ cdef extern from "tandem.h":
     uint64_t tandem_next_u64(tandem_rng *rng) nogil
     double tandem_next_f64(tandem_rng *rng) nogil
     void tandem_fill_bool(tandem_rng *rng, c_bool *out, size_t n) nogil
-    # tandem_u128 is two uint64 halves, so a uint64 pointer has its layout.
-    void tandem_fill_u128(tandem_rng *rng, uint64_t *out, size_t n) nogil
+    ctypedef struct tandem_u128:
+        uint64_t lo, hi
+    void tandem_fill_u128(tandem_rng *rng, tandem_u128 *out, size_t n) nogil
     void tandem_fill_f16_bits(tandem_rng *rng, uint16_t *out, size_t n) nogil
     void tandem_fill_char(tandem_rng *rng, uint32_t *out, size_t n) nogil
     void tandem_fill_c32(tandem_rng *rng, float *out, size_t n) nogil
@@ -425,7 +426,7 @@ cdef void fill_code(tandem_rng *rng, int code, void *p, size_t n) noexcept nogil
     elif code == CODE_F64: tandem_fill_f64(rng, <double *>p, n)
     elif code == CODE_C32: tandem_fill_c32(rng, <float *>p, n)
     elif code == CODE_C64: tandem_fill_c64(rng, <double *>p, n)
-    elif code == CODE_U128: tandem_fill_u128(rng, <uint64_t *>p, n)
+    elif code == CODE_U128: tandem_fill_u128(rng, <tandem_u128 *>p, n)
     else: tandem_fill_char(rng, <uint32_t *>p, n)
 
 

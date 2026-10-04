@@ -1,27 +1,6 @@
 # API
 
-- `Tandem(seed, K=32)`: the bit generator. The seed is an integer in `[0, 2**128)`, a
-  `SeedSequence`, or `None`. `Tandem.from_key(key, position, K)` takes the transport form.
-- `random`, `raw`: Float64 or Float32 draws and unsigned words, fast fill, `out=` supported.
-- `fill(out)`: any spec type (`bool`, `int8` to `uint64`, `float16` to `float64`, `complex64`,
-  `complex128`, `V16`) in any contiguous shape, GIL released.
-- `u128`, `char`: 128-bit words as `(size, 2)` `uint64` rows, and Unicode scalar values.
-- `below(n, size, dtype)`: bounded integers on `[0, n)`, one draw per element.
-- `normal`, `exponential`: Box-Muller normals and `-ln(1 - u)` exponentials, `float64` or `float32`.
-- `split`, `fork`, `sub`, `spawn`: child streams. `Generator.spawn` uses `split(0)`, `split(1)`, ...
-- `at(dtype, i)`, `advance_to(p)`, `position`, `key`, `chunk_length`, `state`: random access
-  and transport. Pickling goes through `state`.
-- `TandemGenerator(seed, K=32)`: a `Generator` whose `random`, `uniform`, `standard_normal`,
-  `normal`, `standard_exponential`, `exponential`, and `integers` use the C fills and give the
-  cross-port values. Other methods fall through to NumPy.
-- Parallel use: ranks, threads, or devices that start at their first element, or draw from
-  `split(task)`, reproduce a serial run. See
-  [Appendix B](https://github.com/tandem-rng/spec/blob/main/SPEC.md#appendix-b-parallel-decomposition-non-normative).
-
-`Generator(Tandem(seed))` keeps NumPy's ziggurat and Lemire code over the same stream, so its
-normals and integers differ from `TandemGenerator`.
-
-## Examples
+## Use
 
 ```python
 import numpy as np
@@ -52,6 +31,26 @@ t.at(np.float64, 10**12)               # random access: element i of the next fi
 t.advance_to(2**40)                    # seek to a bit position, same as t.position = 2**40
 ```
 
+## Reference
+
+- `Tandem(seed, K=32)`: the bit generator. The seed is an integer in `[0, 2**128)`, a
+  `SeedSequence`, or `None`. `Tandem.from_key(key, position, K)` takes the transport form.
+- `random`, `raw`: Float64 or Float32 draws and unsigned words, fast fill, `out=` supported.
+- `fill(out)`: any spec type (`bool`, `int8` to `uint64`, `float16` to `float64`, `complex64`,
+  `complex128`, `V16`) in any contiguous shape, GIL released.
+- `u128`, `char`: 128-bit words as `(size, 2)` `uint64` rows, and Unicode scalar values.
+- `below(n, size, dtype)`: bounded integers on `[0, n)`, one draw per element.
+- `normal`, `exponential`: Box-Muller normals and `-ln(1 - u)` exponentials, `float64` or `float32`.
+- `split`, `fork`, `sub`, `spawn`: child streams. `Generator.spawn` uses `split(0)`, `split(1)`, ...
+- `at(dtype, i)`, `advance_to(p)`, `position`, `key`, `chunk_length`, `state`: random access
+  and transport. Pickling goes through `state`.
+- `TandemGenerator(seed, K=32)`: a `Generator` whose `random`, `uniform`, `standard_normal`,
+  `normal`, `standard_exponential`, `exponential`, and `integers` use the C fills and give the
+  cross-port values. Other methods fall through to NumPy.
+
+`Generator(Tandem(seed))` keeps NumPy's ziggurat and Lemire code over the same stream, so its
+normals and integers differ from `TandemGenerator`.
+
 `Tandem(seed, K=32)` accepts an integer seed in `[0, 2**128)`, a `SeedSequence`, or `None`
 for OS entropy. An integer goes through the specification's seed whitening, so `Tandem(42)`
 produces the specification's stream for seed 42. A
@@ -75,26 +74,7 @@ scalar values as `uint32`. `random` and `raw` are unchanged.
 bounded-integer, normal, and exponential contracts, taken from tandem-c and tandem-cuda and not
 part of the specification. They are not `Generator.integers`, `Generator.standard_normal`, and
 `Generator.standard_exponential`, which keep NumPy's algorithms over the bit generator and give
-different values.
-
-- `below` draws on `[0, n)` by Lemire's multiply-and-reject over `uint32` or `uint64` draws
-  (`dtype`, default `uint64`). With `size` or `out` it draws element `i` from stream draw `i`
-  and retries a rejected draw on a fallback generator keyed by the draw's global index, so it
-  uses exactly one draw per element, the position advances by that, and a fill cut at any element
-  boundary equals the whole fill. Without them it is one scalar draw, which takes as many
-  draws as the rejection loop needs. `n = 0` returns 0.
-- `normal` is Box-Muller on pairs of uniform draws `a`, `b` of the dtype: with
-  `r = sqrt(-2 ln(1 - a))` the pair is `(r cos 2 pi b, r sin 2 pi b)`. Pair `j` gives elements
-  `2j` (cos half) and `2j + 1` (sin half) from uniforms `2j` and `2j + 1`. An odd `size` keeps
-  the cos half of its last pair and still consumes both uniforms. A scalar draw is the cos half
-  and consumes two uniforms, so it equals element 0 of a fill. The values are the bits of
-  tandem-c's normal fills on every compiler.
-- `exponential` draws `-ln(1 - u)` from one uniform `u` of the dtype per element, `float64` from
-  `float64` uniforms in double and `float32` from `float32` uniforms in single, with the
-  polynomial logarithm of the normals and no libm call. Element `i` comes from uniform `i`, so a
-  fill equals the scalar draws, a fill cut at any element boundary equals the whole fill, and
-  `n = 0` leaves the position unchanged. The bits are the same in every Tandem port and on every
-  compiler.
+different values. [Design](design.md) gives the three contracts.
 
 `TandemGenerator(seed, K=32)` is a `numpy.random.Generator` over `Tandem` that overrides
 `random`, `uniform`, `standard_normal`, `normal`, `standard_exponential`, `exponential`, and
@@ -124,7 +104,9 @@ NumPy's `Generator.random()` computes `(next_uint64 >> 11) * 2**-53` and
 specification's own mappings, so `Generator(Tandem(42)).random(n)` equals `Tandem(42).random(n)`. The `state` property is a dict of
 `key`, `position`, and `K`, and pickling goes through it.
 
-Parallel use: element `i` of a fill is draw `i`, so ranks, threads or devices that start at the
+## Parallel use
+
+Element `i` of a fill is draw `i`, so ranks, threads or devices that start at the
 position of their first element, or draw from `split(task)`, reproduce a serial run for any
 decomposition, as
 [Appendix B](https://github.com/tandem-rng/spec/blob/main/SPEC.md#appendix-b-parallel-decomposition-non-normative)

@@ -1,6 +1,12 @@
 # Tests
 
-`pixi run test` runs `tests/test_tandem.py`. It checks:
+```sh
+pixi run test     # tests/test_tandem.py
+```
+
+## Suite
+
+`tests/test_tandem.py` checks:
 
 - Every specification vector (`tests/vectors.json`) and the stream dumps in `tests/data`.
 - `below`, `normal`, and `exponential` against the tandem-cuda fixtures in
@@ -22,4 +28,7 @@ as SHA-256), so they are the same bits on every compiler. The `standard_exponent
 same test against `tools/dump_exponentials.c` (FNV-1a `0x47f8f98297d94ee2`). Fills cut at element
 boundaries, `n = 0`, the Exp(1) moments to fourth order, and a Kolmogorov-Smirnov test on 10^7
 draws cover the rest.
+
+## Fixtures
+
 `tools/bump.sh` moves the pin to the latest main.

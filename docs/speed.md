@@ -1,5 +1,9 @@
 # Speed
 
+`pixi run bench` produces the figures.
+
+## CPU
+
 Apple M4, one thread, `pixi run bench`, 2^22 elements per call, minimum of five runs, GiB/s of
 output. Every call allocates its array.
 

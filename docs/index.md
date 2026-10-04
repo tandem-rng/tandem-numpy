@@ -1,6 +1,10 @@
-# tandem-numpy documentation
+# tandem-numpy
 
-- [API](api.md): `Tandem`, `TandemGenerator`, the derived draws and parallel use.
+NumPy `BitGenerator` for Tandem8x32. It wraps tandem-c and produces the stream of the
+[specification](https://github.com/tandem-rng/spec/blob/main/SPEC.md) bit for bit.
+
+- [API](api.md): `Tandem`, `TandemGenerator` and parallel use.
+- [Design](design.md): the bounded integer, normal and exponential contracts.
 - [Tests](tests.md): what the suite checks.
 - [Speed](speed.md): fill and `Generator` figures on the Apple M4.
 

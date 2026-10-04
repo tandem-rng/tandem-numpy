@@ -81,6 +81,12 @@ NumPy's `Generator.random()` computes `(next_uint64 >> 11) * 2**-53` and
 specification's own mappings, so `Generator(Tandem(42)).random(n)` equals `Tandem(42).random(n)`. The `state` property is a dict of
 `key`, `position`, and `K`, and pickling goes through it.
 
+Parallel use: element `i` of a fill is draw `i`, so ranks, threads or devices that start at the
+position of their first element, or draw from `split(task)`, reproduce a serial run for any
+decomposition, as
+[Appendix B](https://github.com/tandem-rng/spec/blob/main/SPEC.md#appendix-b-parallel-decomposition-non-normative)
+of the specification shows.
+
 ## Install
 
 ```sh

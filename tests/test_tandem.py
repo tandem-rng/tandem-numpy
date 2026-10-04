@@ -521,7 +521,8 @@ def test_generator_derived_samplers():
 @pytest.mark.parametrize("dtype, width", [(np.int8, 32), (np.uint16, 32), (np.int32, 32), (np.uint32, 32),
                                           (np.int64, 64), (np.uint64, 64)])
 def test_integers_are_below_plus_low(dtype, width):
-    word = np.uint32 if width == 32 else np.uint64
+    # Every range here is at most 2**32, so the draws are 32-bit whatever the dtype.
+    word = np.uint32
     info = np.iinfo(dtype)
     low, high = max(info.min, -1000), min(info.max, 1000)
     g, ref = pair(21, 65)
@@ -554,14 +555,17 @@ def test_integers_scalar_and_full_range():
     with pytest.raises(ValueError):
         g.integers(0, 300, dtype=np.uint8)
     with pytest.raises(TypeError):
-        g.integers(np.zeros(3), 5)
+        g.integers(1.5, 5)
 
 
 @pytest.mark.parametrize("dtype, table", [(np.uint32, "CROSS_FILL_U32"), (np.uint64, "CROSS_FILL_U64")])
 def test_integers_match_cross_fixtures(dtype, table):
     for start, n, want, end in cross_cases("cross_fill_below.h", table):
+        # The range picks the width: the 64-bit table only applies above 2**32.
+        if (n > 2**32) != (table == "CROSS_FILL_U64"):
+            continue
         g, _ = pair(42, start)
-        got = g.integers(0, n, len(want), dtype)
+        got = g.integers(0, n, len(want), np.int64 if n <= 2**32 else dtype)
         assert got.tolist() == want and g.bit_generator.position == end
 
 
@@ -621,3 +625,26 @@ def test_generator_spawn_and_pickle():
     copy = pickle.loads(pickle.dumps(g))
     assert type(copy) is TandemGenerator and copy.bit_generator.state == g.bit_generator.state
     assert np.array_equal(copy.standard_normal(10), g.standard_normal(10))
+
+
+def test_integers_width_follows_range_not_dtype():
+    wide, narrow = pair(6, 17)[0], pair(6, 17)[0]
+    a = wide.integers(0, 1000, 500, np.int64)
+    assert np.array_equal(a, narrow.integers(0, 1000, 500, np.int32))
+    assert a.dtype == np.int64
+    ref = at_position(17, 6)
+    assert np.array_equal(a, ref.below(1000, 500, np.uint32))
+    assert wide.bit_generator.position == ref.position
+    # Above 2**32 the draws are 64-bit.
+    g, ref = pair(6, 17)
+    assert np.array_equal(g.integers(0, 2**40, 50), ref.below(2**40, 50))
+
+
+def test_integers_bool_and_array_bounds():
+    g, ref = pair(2, 3)
+    b = g.integers(0, 2, 100, dtype=np.bool_)
+    assert b.dtype == np.bool_ and np.array_equal(b, ref.below(2, 100, np.uint32).astype(bool))
+    assert g.integers(0, 1, dtype=np.bool_, endpoint=True) in (False, True)
+    # Array bounds are NumPy's own algorithm.
+    arr = TandemGenerator(9).integers([0, 10], [5, 20])
+    assert arr.shape == (2,) and (arr >= [0, 10]).all() and (arr < [5, 20]).all()

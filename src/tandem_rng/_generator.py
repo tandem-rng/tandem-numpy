@@ -32,8 +32,9 @@ class TandemGenerator(Generator):
     method falls through to NumPy and reads the bit generator one value at a time.
 
     The overridden methods move the shared bit generator exactly as the matching
-    ``Tandem`` fills do. ``integers`` takes scalar bounds and draws 32-bit words for dtypes
-    up to 32 bits and 64-bit words for 64-bit dtypes. It does not support ``bool``.
+    ``Tandem`` fills do. ``integers`` draws 32-bit words when the range is at most 2**32 and
+    64-bit words otherwise, whatever the dtype, so ``dtype`` does not change the values.
+    Array-valued bounds fall through to NumPy's own ``integers``.
     """
 
     def __init__(self, seed=None, K=32):
@@ -80,8 +81,10 @@ class TandemGenerator(Generator):
         return r[()] if size is None and np.ndim(r) == 0 else r
 
     def integers(self, low, high=None, size=None, dtype=np.int64, endpoint=False):
+        if np.ndim(low) or np.ndim(high):
+            return super().integers(low, high, size, dtype, endpoint)
         dtype = np.dtype(dtype)
-        if dtype.kind not in "iu":
+        if dtype.kind not in "iub":
             raise TypeError(f"dtype {dtype} is not a supported integer type")
         low = _scalar_int(low)
         if high is None:
@@ -89,19 +92,24 @@ class TandemGenerator(Generator):
         else:
             high = _scalar_int(high)
         high += bool(endpoint)
-        info = np.iinfo(dtype)
-        if low < info.min or high > info.max + 1:
+        dmin, dmax = (0, 1) if dtype.kind == "b" else (np.iinfo(dtype).min, np.iinfo(dtype).max)
+        if low < dmin or high > dmax + 1:
             raise ValueError(f"bounds are out of range for {dtype}")
         if low >= high:
             raise ValueError("low > high" if endpoint else "low >= high")
-        width = 32 if dtype.itemsize <= 4 else 64
+        span = high - low
+        # The range alone picks the draw width, so the dtype does not change the values.
+        width = 32 if span <= 2**32 else 64
         word = _UNSIGNED[width]
         bg = self.bit_generator
-        span = high - low
         # A span of 2**width needs no rejection: every word is in range.
         r = bg.raw(size, word) if span == 2**width else bg.below(span, size, word)
         if size is None:
             return dtype.type(int(r) + low)
+        bits = 8 * dtype.itemsize
+        if bits > width:
+            r = r.astype(np.uint64)
+            width = 64
         if low:
-            r += word(low % 2**width)
-        return r.view(dtype) if dtype.itemsize * 8 == width else r.astype(dtype)
+            r += r.dtype.type(low % 2**width)
+        return r.view(dtype) if bits == width and dtype.kind != "b" else r.astype(dtype)

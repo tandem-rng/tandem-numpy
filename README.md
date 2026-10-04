@@ -83,8 +83,11 @@ choice: it keeps NumPy's ziggurat and Lemire code over the same stream, so its n
 Every method that `TandemGenerator` does not override falls through to NumPy and reads the bit
 generator one value at a time. The overridden methods move the shared bit generator exactly as
 the matching `Tandem` fills do, and `normal` and `uniform` are `loc + scale * standard_normal`
-and `low + (high - low) * random`. `integers` takes scalar bounds, draws 32-bit words for dtypes
-up to 32 bits and 64-bit words for 64-bit dtypes, and does not support `bool`. NumPy's integers need not match them.
+and `low + (high - low) * random`. `integers` takes the draw width from the range, 32-bit words
+when the range is at most `2**32` and 64-bit words otherwise, as the specification says, so the
+dtype does not change the values: `int64` with a small range uses the `uint32` bounded fill and
+widens. It supports `bool`, and array-valued bounds fall through to NumPy's own `integers`. NumPy's
+integers need not match them.
 
 `at(dtype, i)` returns element `i` of the fill that would start at the current position, for
 `uint32`, `uint64`, `float32`, and `float64`, without moving the generator. `advance_to(p)` and
@@ -136,16 +139,16 @@ output. Every call allocates its array.
 
 | | Tandem fill | `TandemGenerator(42)` | `Generator(Tandem(42))` | `Generator(PCG64(42))` |
 |---|---|---|---|---|
-| `random` float64 | 10.7 | 10.0 | 4.3 | 2.2 |
-| `random` float32 | 16.4 | 16.3 | 3.0 | 2.3 |
+| `random` float64 | 10.1 | 9.7 | 4.1 | 2.2 |
+| `random` float32 | 16.3 | 16.3 | 2.9 | 2.3 |
 | `integers(0, 1000)` int32 | 7.6 | 7.6 | 3.0 | 2.3 |
-| `integers(0, 1000)` int64 | 5.7 | 5.7 | 4.8 | 3.9 |
-| `standard_normal` float64 | 4.0 | 4.1 | 1.9 | 1.9 |
-| `standard_normal` float32 | 5.4 | 5.4 | 1.1 | 1.5 |
-| raw `uint64` words | 10.6 | - | 4.2 | 2.2 |
+| `integers(0, 1000)` int64 | 5.6 | 7.8 | 4.8 | 3.7 |
+| `standard_normal` float64 | 3.9 | 3.9 | 2.0 | 1.8 |
+| `standard_normal` float32 | 5.4 | 5.4 | 1.2 | 1.5 |
+| raw `uint64` words | 10.9 | - | 4.2 | 2.2 |
 
 The Tandem column calls the C fills of the bit generator with the GIL released: `random`,
-`below(1000, n, dtype)`, `normal`, and `raw`. `TandemGenerator` routes the sampler names through
+`below(1000, n, dtype)` at the dtype's width, `normal`, and `raw`. `TandemGenerator` routes the sampler names through
 the same fills. The plain `Generator` columns are NumPy's own samplers: `Generator` calls the bit
 generator one value at a time, through `next_double`, `next_uint32`, and `next_uint64`, and runs
 its own ziggurat for normals and its own Lemire method for integers. Its speed is bounded by

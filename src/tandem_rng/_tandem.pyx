@@ -397,10 +397,9 @@ cdef class Tandem(BitGenerator):
         elements 2j (cos half) and 2j + 1 (sin half) from uniforms 2j and 2j + 1. An odd
         ``size`` keeps the cos half of its last pair and still consumes both uniforms. A
         scalar draw is the cos half and consumes two uniforms, so it equals element 0 of a
-        fill. This matches tandem-c and tandem-cuda and is not part of the specification.
-        values agree across ports to about 1e-12 relative for float64 and a few ulps for
-        float32, since libm differs. It is not ``numpy.random.Generator.standard_normal``, which
-        keeps its own ziggurat over this bit generator.
+        fill. The values are the bits of tandem-c's normal fills, on every compiler. It is not
+        ``numpy.random.Generator.standard_normal``, which keeps its own ziggurat over this bit
+        generator.
         """
         cdef np.ndarray a = _buffer(size, dtype, out, (np.float64, np.float32))
         cdef void *p = np.PyArray_DATA(a)

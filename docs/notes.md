@@ -68,9 +68,8 @@ different values.
   `r = sqrt(-2 ln(1 - a))` the pair is `(r cos 2 pi b, r sin 2 pi b)`. Pair `j` gives elements
   `2j` (cos half) and `2j + 1` (sin half) from uniforms `2j` and `2j + 1`. An odd `size` keeps
   the cos half of its last pair and still consumes both uniforms. A scalar draw is the cos half
-  and consumes two uniforms, so it equals element 0 of a fill. Values
-  agree with other ports to about `1e-12` relative for `float64` and a few ulps for `float32`,
-  because libm differs.
+  and consumes two uniforms, so it equals element 0 of a fill. The values are the bits of
+  tandem-c's normal fills on every compiler.
 - `exponential` draws `-ln(1 - u)` from one uniform `u` of the dtype per element, `float64` from
   `float64` uniforms in double and `float32` from `float32` uniforms in single, with the
   polynomial logarithm of the normals and no libm call. Element `i` comes from uniform `i`, so a

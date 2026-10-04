@@ -428,25 +428,15 @@ def test_below_edges():
 def test_normal_matches_tandem_cuda():
     # The fixtures are pairs, cos half first. A fill is the flattened pairs and a scalar draw
     # is the cos half, so the scalars equal the even elements.
-    want = cross_floats("cross_normal.h", "CROSS_NORMAL")
-    end = cross_position("cross_normal.h", "CROSS_NORMAL_END_POS")
-    rng = unaligned()
-    assert np.allclose(rng.normal(want.size), want, rtol=1e-12, atol=0)
-    assert rng.position == end
-    rng = unaligned()
-    got = np.array([rng.normal() for _ in want[::2]])
-    assert np.allclose(got, want[::2], rtol=1e-12, atol=0) and rng.position == end
-
-    want = cross_floats("cross_normal.h", "CROSS_NORMALF")
-    end = cross_position("cross_normal.h", "CROSS_NORMALF_END_POS")
-    # Float libm differs between platforms: 8 ulps and a floor near the zeros of cos and sin.
-    close = lambda got: np.all(np.abs(got - want[:len(got)]) <= 8 * 2.0**-23 * np.abs(want[:len(got)]) + 1e-6)
-    rng = unaligned()
-    assert close(rng.normal(want.size, np.float32)) and rng.position == end
-    rng = unaligned()
-    got = np.array([rng.normal(dtype=np.float32) for _ in want[::2]])
-    assert np.all(np.abs(got - want[::2]) <= 8 * 2.0**-23 * np.abs(want[::2]) + 1e-6)
-    assert rng.position == end
+    # The fixtures are bit exact since tandem-c 09615e0.
+    for dtype, table in ((np.float64, "CROSS_NORMAL"), (np.float32, "CROSS_NORMALF")):
+        want = cross_floats("cross_normal.h", table).astype(dtype)
+        end = cross_position("cross_normal.h", table + "_END_POS")
+        rng = unaligned()
+        assert rng.normal(want.size, dtype).tobytes() == want.tobytes() and rng.position == end
+        rng = unaligned()
+        got = np.array([rng.normal(dtype=dtype) for _ in want[::2]], dtype)
+        assert got.tobytes() == want[::2].tobytes() and rng.position == end
 
 
 def test_normal_fill_pairs_and_out():
@@ -463,8 +453,30 @@ def test_normal_fill_pairs_and_out():
         assert odd.position == even.position
         buf = np.empty(10, dtype)
         assert Tandem(2).normal(out=buf, dtype=dtype) is buf
-    z = Tandem(5).normal(200_000)
-    assert abs(z.mean()) < 0.02 and abs(z.std() - 1) < 0.02
+
+
+def ks_uniform_ok(u):
+    # sqrt(n) D < 1.95 is the asymptotic 0.1% critical value of the Kolmogorov-Smirnov test.
+    u, n = np.sort(u), u.size
+    i = np.arange(1, n + 1)
+    return math.sqrt(n) * max(np.max(i / n - u), np.max(u - (i - 1) / n)) < 1.95
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.float32])
+def test_normal_follows_the_standard_law(dtype):
+    # A pair (x, y) is iid N(0, 1) exactly when (x^2 + y^2) / 2 is Exp(1) and the angle is
+    # uniform and independent of it, so KS tests on both transformed to uniforms check the
+    # joint law without a normal CDF. Moments to 4th order check the marginal: 0, 1, 0, 3,
+    # with variances 1, 2, 15, 96, each within five standard errors.
+    n = 10_000_000
+    z = Tandem(13).normal(n, dtype).astype(np.float64)
+    for k, (m, var) in enumerate([(0, 1), (1, 2), (0, 15), (3, 96)], 1):
+        assert abs(np.mean(z**k) - m) < 5 * math.sqrt(var / n)
+    x, y = z[0::2], z[1::2]
+    radius = -np.expm1(-(x * x + y * y) / 2)
+    angle = np.arctan2(y, x) / (2 * np.pi) % 1.0
+    assert ks_uniform_ok(radius) and ks_uniform_ok(angle)
+    assert abs(np.corrcoef(radius, angle)[0, 1]) < 5 / math.sqrt(n / 2)
 
 
 @pytest.mark.parametrize("dtype", [np.uint32, np.uint64])
@@ -575,7 +587,7 @@ def test_generator_normal_matches_cross_fixtures():
     want = cross_floats("cross_normal.h", "CROSS_NORMAL")
     g = TandemGenerator(Tandem(42))
     g.bit_generator.position = 1
-    assert np.allclose(g.standard_normal(want.size), want, rtol=1e-12, atol=0)
+    assert g.standard_normal(want.size).tobytes() == want.tobytes()
     assert g.bit_generator.position == cross_position("cross_normal.h", "CROSS_NORMAL_END_POS")
 
 
@@ -685,19 +697,12 @@ def test_exponential_follows_the_standard_law(dtype):
     # Exp(1) has E[x^k] = k! and Var[x^k] = (2k)! - (k!)^2: each moment must lie within
     # five standard errors, and the Kolmogorov-Smirnov statistic must not reject Exp(1).
     n = 10_000_000
-    x = Tandem(11).exponential(n, dtype)
+    x = Tandem(11).exponential(n, dtype).astype(np.float64)
     assert x.min() >= 0
     for k in range(1, 5):
         fact, fact2 = math.factorial(k), math.factorial(2 * k)
-        m = np.mean(x.astype(np.float64) ** k)
-        assert abs(m - fact) < 5 * math.sqrt(fact2 - fact**2) / math.sqrt(n)
-    # SciPy is not a test dependency: the statistic is computed here, and sqrt(n) D < 1.95 is
-    # the asymptotic 0.1% critical value.
-    x = np.sort(x).astype(np.float64)
-    cdf = -np.expm1(-x)
-    i = np.arange(1, n + 1)
-    d = max(np.max(i / n - cdf), np.max(cdf - (i - 1) / n))
-    assert math.sqrt(n) * d < 1.95
+        assert abs(np.mean(x**k) - fact) < 5 * math.sqrt(fact2 - fact**2) / math.sqrt(n)
+    assert ks_uniform_ok(-np.expm1(-x))
 
 
 def test_generator_out_and_dtype_paths():

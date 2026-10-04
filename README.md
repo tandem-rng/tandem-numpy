@@ -14,7 +14,8 @@ pip install ./tandem-numpy
 ```
 
 Needs Python 3.11, NumPy 2.0, a C compiler, and meson-python.
-The C code is the `external/tandem-c` submodule, pinned at tandem-c `b049384`. For development, `pixi install` then `pixi run test`.
+The C code is the `external/tandem-c` submodule, pinned at tandem-c `b049384`.
+For development, `pixi install` then `pixi run test`.
 
 ## Use
 

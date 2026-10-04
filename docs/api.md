@@ -1,8 +1,27 @@
-# Notes
+# API
 
-Detail moved out of the README. The README has the short form.
+- `Tandem(seed, K=32)`: the bit generator. The seed is an integer in `[0, 2**128)`, a
+  `SeedSequence`, or `None`. `Tandem.from_key(key, position, K)` takes the transport form.
+- `random`, `raw`: Float64 or Float32 draws and unsigned words, fast fill, `out=` supported.
+- `fill(out)`: any spec type (`bool`, `int8` to `uint64`, `float16` to `float64`, `complex64`,
+  `complex128`, `V16`) in any contiguous shape, GIL released.
+- `u128`, `char`: 128-bit words as `(size, 2)` `uint64` rows, and Unicode scalar values.
+- `below(n, size, dtype)`: bounded integers on `[0, n)`, one draw per element.
+- `normal`, `exponential`: Box-Muller normals and `-ln(1 - u)` exponentials, `float64` or `float32`.
+- `split`, `fork`, `sub`, `spawn`: child streams. `Generator.spawn` uses `split(0)`, `split(1)`, ...
+- `at(dtype, i)`, `advance_to(p)`, `position`, `key`, `chunk_length`, `state`: random access
+  and transport. Pickling goes through `state`.
+- `TandemGenerator(seed, K=32)`: a `Generator` whose `random`, `uniform`, `standard_normal`,
+  `normal`, `standard_exponential`, `exponential`, and `integers` use the C fills and give the
+  cross-port values. Other methods fall through to NumPy.
+- Parallel use: ranks, threads, or devices that start at their first element, or draw from
+  `split(task)`, reproduce a serial run. See
+  [Appendix B](https://github.com/tandem-rng/spec/blob/main/SPEC.md#appendix-b-parallel-decomposition-non-normative).
 
-## Use
+`Generator(Tandem(seed))` keeps NumPy's ziggurat and Lemire code over the same stream, so its
+normals and integers differ from `TandemGenerator`.
+
+## Examples
 
 ```python
 import numpy as np
@@ -110,52 +129,3 @@ position of their first element, or draw from `split(task)`, reproduce a serial 
 decomposition, as
 [Appendix B](https://github.com/tandem-rng/spec/blob/main/SPEC.md#appendix-b-parallel-decomposition-non-normative)
 of the specification shows.
-
-## Install
-
-```sh
-pip install .
-```
-
-The reference C implementation sits in the `external/tandem-c` git submodule. Clone with
-`git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone.
-GitHub's ZIP download omits submodules and does not build.
-
-The submodule is pinned at tandem-c `b049384`. The extension is built with `-ffp-contract=off` and no
-`-mfma`: the normal loop uses explicit fused multiply-adds, so its bits do not depend on the
-compiler, and on x86 the AVX2 and FMA copy is chosen at run time, also in a wheel built for a
-baseline x86-64.
-
-The build uses meson-python and needs a C compiler. For development, `pixi install` creates an
-environment with the package installed editable, which rebuilds the extension on import when
-the sources change, and `pixi run test` runs the tests.
-
-## Tests
-
-`tests/test_tandem.py` checks every vector of the specification (`tests/vectors.json`, a copy
-of the spec repository's file) and compares fills and scalar draws with reference stream dumps in `tests/data`.
-The new paths are checked the same way: `fill`, `u128`, and `char` against the dumps of every
-specification type, `at` and `advance_to` against the dumps and against fills from the same
-position, `spawn` against `split`, and `below`, `normal`, and `exponential` against the tandem-cuda
-fixtures in `external/tandem-c/tests` (`cross_below.h`, `cross_fill_below.h`, `cross_normal.h`,
-`cross_exponential.h`), which the test parses. The exponential fixtures must match bit for bit. `TandemGenerator` is checked against the same fills and fixtures, including `integers` calls of every dtype, with and without `endpoint`, cut at arbitrary
-boundaries against the whole call. A hash test compares the `standard_normal` float64 and float32
-fills with the bytes of tandem-c's `tools/dump_normals.c` (FNV-1a `0x9414e1315e2653be`, checked here
-as SHA-256), so they are the same bits on every compiler. The `standard_exponential` fills have the
-same test against `tools/dump_exponentials.c` (FNV-1a `0x47f8f98297d94ee2`). Fills cut at element
-boundaries, `n = 0`, the Exp(1) moments to fourth order, and a Kolmogorov-Smirnov test on 10^7
-draws cover the rest.
-`tools/bump.sh` moves the pin to the latest main.
-
-## Speed
-
-Apple M4, one thread, `pixi run bench`, 2^22 elements per call, minimum of five runs, GiB/s of
-output. Every call allocates its array.
-
-The Tandem column calls the C fills of the bit generator with the GIL released: `random`,
-`below(1000, n, dtype)` at the dtype's width, `normal`, `exponential`, and `raw`. `TandemGenerator` routes the sampler names through
-the same fills. The plain `Generator` columns are NumPy's own samplers: `Generator` calls the bit
-generator one value at a time, through `next_double`, `next_uint32`, and `next_uint64`, and runs
-its own ziggurat for normals and its own Lemire method for integers. Its speed is bounded by
-that call, and its normals and large-range integers are NumPy's values, not Tandem's. The hooks
-fill a buffer of 1024 words at a time, with the stream's alignment rules kept for mixed widths.

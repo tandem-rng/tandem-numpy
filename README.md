@@ -13,8 +13,8 @@ git clone --recurse-submodules https://github.com/tandem-rng/tandem-numpy
 pip install ./tandem-numpy
 ```
 
-Needs Python 3.11, NumPy 2.0, a C compiler, and meson-python. The C code is the `external/tandem-c` submodule, pinned at
-tandem-c `b049384`. For development, `pixi install` then `pixi run test`.
+Needs Python 3.11, NumPy 2.0, a C compiler, and meson-python.
+The C code is the `external/tandem-c` submodule, pinned at tandem-c `b049384`. For development, `pixi install` then `pixi run test`.
 
 ## Use
 
@@ -65,7 +65,8 @@ normals and integers differ from `TandemGenerator`.
 `pixi run test` runs `tests/test_tandem.py`. It checks:
 
 - Every specification vector (`tests/vectors.json`) and the stream dumps in `tests/data`.
-- `below`, `normal`, and `exponential` against the tandem-cuda fixtures in `external/tandem-c/tests`.
+- `below`, `normal`, and `exponential` against the tandem-cuda fixtures in
+  `external/tandem-c/tests`.
 - The `standard_normal` and `standard_exponential` fills against hashes of the dumps from
   tandem-c's `tools/dump_normals.c` and `tools/dump_exponentials.c`.
 - Fills cut at any element boundary equal the whole fill.

@@ -452,3 +452,10 @@ def test_normal_fill_pairs_and_out():
         assert Tandem(2).normal(out=buf, dtype=dtype) is buf
     z = Tandem(5).normal(200_000)
     assert abs(z.mean()) < 0.02 and abs(z.std() - 1) < 0.02
+
+
+@pytest.mark.parametrize("dtype", [np.uint32, np.uint64])
+def test_below_empty_fill_keeps_position(dtype):
+    rng = unaligned()
+    assert rng.below(5, 0, dtype).size == 0
+    assert rng.position == 1

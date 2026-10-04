@@ -11,7 +11,7 @@ implementation and produces the stream the specification defines, bit for bit.
 ```python
 import numpy as np
 from numpy.random import Generator
-from tandem_rng import Tandem
+from tandem_rng import Tandem, TandemGenerator
 
 rng = Generator(Tandem(42))            # any NumPy distribution
 x = rng.normal(size=1000)
@@ -29,6 +29,8 @@ worker = t.split(7)                    # by index, from the key alone
 kids = t.fork(4)                       # from the current block, parent moves on
 sub = t.sub(3)                         # by purpose identifier
 streams = Generator(t).spawn(4)        # Generators over t.split(0) .. t.split(3)
+g = TandemGenerator(42)                # NumPy Generator with Tandem's own samplers, fast
+g.standard_normal(10**6); g.integers(0, 1000, 10**6)
 t.key, t.position, t.chunk_length      # transport form
 t.at(np.float64, 10**12)               # random access: element i of the next fill
 t.advance_to(2**40)                    # seek to a bit position, same as t.position = 2**40
@@ -72,6 +74,18 @@ generator and give different values.
   agree with other ports to about `1e-12` relative for `float64` and a few ulps for `float32`,
   because libm differs.
 
+`TandemGenerator(seed, K=32)` is a `numpy.random.Generator` over `Tandem` that overrides
+`random`, `uniform`, `standard_normal`, `normal`, and `integers` with the C fills, with NumPy's
+signatures, `dtype`, `size`, `out`, and `endpoint` handling. Its values are the cross-port ones
+of Appendix A: Tandem's pair normals and Lemire integers with the fallback stream, equal in every
+Tandem port, and they run at the speed of the fills. `Generator(Tandem(seed))` is the other
+choice: it keeps NumPy's ziggurat and Lemire code over the same stream, so its normals differ.
+Every method that `TandemGenerator` does not override falls through to NumPy and reads the bit
+generator one value at a time. The overridden methods move the shared bit generator exactly as
+the matching `Tandem` fills do, and `normal` and `uniform` are `loc + scale * standard_normal`
+and `low + (high - low) * random`. `integers` takes scalar bounds, draws 32-bit words for dtypes
+up to 32 bits and 64-bit words for 64-bit dtypes, and does not support `bool`. NumPy's integers need not match them.
+
 `at(dtype, i)` returns element `i` of the fill that would start at the current position, for
 `uint32`, `uint64`, `float32`, and `float64`, without moving the generator. `advance_to(p)` and
 the `position` setter move to bit position `p` in `[0, 2**63)`, forward or backward, and discard
@@ -110,7 +124,8 @@ The new paths are checked the same way: `fill`, `u128`, and `char` against the d
 specification type, `at` and `advance_to` against the dumps and against fills from the same
 position, `spawn` against `split`, and `below` and `normal` against the tandem-cuda fixtures in
 `external/tandem-c/tests` (`cross_below.h`, `cross_fill_below.h`, `cross_normal.h`), which the test
-parses.
+parses. `TandemGenerator` is checked against the same fills and fixtures, including a
+`integers` call cut at arbitrary boundaries against the whole call.
 CI fails when the vectors drift from upstream or the tandem-c pin is not on tandem-c main.
 `tools/bump.sh` moves the pin to the latest main.
 
@@ -119,23 +134,23 @@ CI fails when the vectors drift from upstream or the tandem-c pin is not on tand
 Apple M4, one thread, `pixi run bench`, 2^24 elements per call, minimum of seven runs, GiB/s of
 output. Every call allocates its array.
 
-| | Tandem fill | `Generator(Tandem(42))` | `Generator(PCG64(42))` |
-|---|---|---|---|
-| `random` float64 | 9.4 | 4.1 | 2.2 |
-| `random` float32 | 16.4 | 2.9 | 2.3 |
-| `integers(0, 1000)` int32 | 7.7 | 3.0 | 2.3 |
-| `integers(0, 1000)` int64 | 5.6 | 4.8 | 3.7 |
-| `standard_normal` float64 | 3.9 | 1.9 | 1.9 |
-| `standard_normal` float32 | 5.4 | 1.1 | 1.5 |
-| raw `uint64` words | 10.5 | 3.9 | 2.1 |
+| | Tandem fill | `TandemGenerator(42)` | `Generator(Tandem(42))` | `Generator(PCG64(42))` |
+|---|---|---|---|---|
+| `random` float64 | 10.7 | 10.0 | 4.3 | 2.2 |
+| `random` float32 | 16.4 | 16.3 | 3.0 | 2.3 |
+| `integers(0, 1000)` int32 | 7.6 | 7.6 | 3.0 | 2.3 |
+| `integers(0, 1000)` int64 | 5.7 | 5.7 | 4.8 | 3.9 |
+| `standard_normal` float64 | 4.0 | 4.1 | 1.9 | 1.9 |
+| `standard_normal` float32 | 5.4 | 5.4 | 1.1 | 1.5 |
+| raw `uint64` words | 10.6 | - | 4.2 | 2.2 |
 
 The Tandem column calls the C fills of the bit generator with the GIL released: `random`,
-`below(1000, n, dtype)`, `normal`, and `raw`. The `Generator` columns are NumPy's own samplers.
-`Generator` calls the bit generator one value at a time, through `next_double`, `next_uint32`,
-and `next_uint64`, and runs its own ziggurat for normals and its own Lemire method for integers.
-Its speed is therefore bounded by that call and does not use the C fills, and its integers and
-normals are NumPy's values, not Tandem's. The hooks fill a buffer of 1024 words at a time, with
-the stream's alignment rules kept for mixed widths.
+`below(1000, n, dtype)`, `normal`, and `raw`. `TandemGenerator` routes the sampler names through
+the same fills. The plain `Generator` columns are NumPy's own samplers: `Generator` calls the bit
+generator one value at a time, through `next_double`, `next_uint32`, and `next_uint64`, and runs
+its own ziggurat for normals and its own Lemire method for integers. Its speed is bounded by
+that call, and its normals and large-range integers are NumPy's values, not Tandem's. The hooks
+fill a buffer of 1024 words at a time, with the stream's alignment rules kept for mixed widths.
 
 ## AI assistance
 

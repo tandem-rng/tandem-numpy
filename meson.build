@@ -20,7 +20,7 @@ endif
 # tandem.c calls the libm normal functions.
 libm = meson.get_compiler('c').find_library('m', required: false)
 
-py.install_sources(['src/tandem_rng/__init__.py'], subdir: 'tandem_rng')
+py.install_sources(['src/tandem_rng/__init__.py', 'src/tandem_rng/_generator.py'], subdir: 'tandem_rng')
 py.extension_module(
   '_tandem',
   ['src/tandem_rng/_tandem.pyx', 'external/tandem-c/tandem.c'],

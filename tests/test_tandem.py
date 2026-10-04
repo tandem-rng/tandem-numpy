@@ -483,3 +483,141 @@ def test_below_fill_cut_equals_whole(dtype, n):
     assert np.array_equal(np.concatenate(parts), whole)
     scalar = unaligned(5)
     assert not np.array_equal([scalar.below(n, dtype=dtype) for _ in whole], whole)
+
+
+# TandemGenerator: the overridden samplers are the C fills, and the rest is NumPy's.
+
+from tandem_rng import TandemGenerator
+
+
+def pair(seed, pos):
+    g = TandemGenerator(seed)
+    g.bit_generator.position = pos
+    return g, at_position(pos, seed)
+
+
+@pytest.mark.parametrize("n, pos", [(1, 0), (7, 33), (1000, 12345), (4097, 999)])
+def test_generator_equals_fills_at_random_positions(n, pos):
+    g, ref = pair(11, pos)
+    assert np.array_equal(g.random(n), ref.random(n))
+    assert np.array_equal(g.random(n, np.float32), ref.random(n, np.float32))
+    assert np.array_equal(g.standard_normal(n), ref.normal(n))
+    assert np.array_equal(g.standard_normal(n, np.float32), ref.normal(n, np.float32))
+    assert g.bit_generator.position == ref.position
+
+
+def test_generator_derived_samplers():
+    g, ref = pair(3, 77)
+    assert np.array_equal(g.normal(2.5, 3.0, 100), 2.5 + 3.0 * ref.normal(100))
+    assert np.array_equal(g.uniform(-2, 6, 100), -2 + 8.0 * ref.random(100))
+    assert g.bit_generator.position == ref.position
+    # Broadcast parameters take their shape from loc and scale.
+    assert g.normal(np.zeros(4), np.ones((3, 1))).shape == (3, 4)
+    assert isinstance(g.normal(), float) and isinstance(g.uniform(), float)
+    with pytest.raises(ValueError):
+        g.normal(0, -1)
+
+
+@pytest.mark.parametrize("dtype, width", [(np.int8, 32), (np.uint16, 32), (np.int32, 32), (np.uint32, 32),
+                                          (np.int64, 64), (np.uint64, 64)])
+def test_integers_are_below_plus_low(dtype, width):
+    word = np.uint32 if width == 32 else np.uint64
+    info = np.iinfo(dtype)
+    low, high = max(info.min, -1000), min(info.max, 1000)
+    g, ref = pair(21, 65)
+    got = g.integers(low, high, 3000, dtype)
+    want = ref.below(high - low, 3000, word).astype(np.int64) + low
+    assert got.dtype == dtype and np.array_equal(got, want)
+    assert g.bit_generator.position == ref.position
+    assert (got >= low).all() and (got < high).all()
+    # endpoint includes high, and one argument means [0, low).
+    g, ref = pair(21, 65)
+    assert np.array_equal(g.integers(low, high, 50, dtype, endpoint=True),
+                          ref.below(high - low + 1, 50, word).astype(np.int64) + low)
+    assert 0 <= g.integers(9, dtype=dtype) < 9
+
+
+def test_integers_scalar_and_full_range():
+    g, ref = pair(4, 5)
+    assert g.integers(1000, dtype=np.uint32) == ref.below(1000, dtype=np.uint32)
+    assert isinstance(g.integers(1000), np.int64)
+    # A span of 2**64 is the raw words, with no rejection to apply.
+    g, ref = pair(4, 5)
+    full = g.integers(0, 2**64 - 1, 20, np.uint64, endpoint=True)
+    assert np.array_equal(full, ref.raw(20, np.uint64))
+    g, ref = pair(4, 5)
+    assert np.array_equal(g.integers(-2**31, 2**31, 20, np.int32),
+                          (ref.raw(20, np.uint32) + np.uint32(2**31)).view(np.int32))
+    for args in [(5, 5), (5, 4)]:
+        with pytest.raises(ValueError):
+            g.integers(*args)
+    with pytest.raises(ValueError):
+        g.integers(0, 300, dtype=np.uint8)
+    with pytest.raises(TypeError):
+        g.integers(np.zeros(3), 5)
+
+
+@pytest.mark.parametrize("dtype, table", [(np.uint32, "CROSS_FILL_U32"), (np.uint64, "CROSS_FILL_U64")])
+def test_integers_match_cross_fixtures(dtype, table):
+    for start, n, want, end in cross_cases("cross_fill_below.h", table):
+        g, _ = pair(42, start)
+        got = g.integers(0, n, len(want), dtype)
+        assert got.tolist() == want and g.bit_generator.position == end
+
+
+def test_generator_normal_matches_cross_fixtures():
+    want = cross_floats("cross_normal.h", "CROSS_NORMAL")
+    g = TandemGenerator(Tandem(42))
+    g.bit_generator.position = 1
+    assert np.allclose(g.standard_normal(want.size), want, rtol=1e-12, atol=0)
+    assert g.bit_generator.position == cross_position("cross_normal.h", "CROSS_NORMAL_END_POS")
+
+
+def test_integers_cut_equals_whole():
+    cuts = (37, 1, 100, 62)
+    for dtype, high in ((np.uint32, 0xC0000001), (np.uint64, 0xC000000000000001)):
+        whole, _ = pair(5, 1)
+        want = whole.integers(0, high, sum(cuts), dtype)
+        g, _ = pair(5, 1)
+        parts = [g.integers(0, high, c, dtype) for c in cuts]
+        assert np.array_equal(np.concatenate(parts), want)
+
+
+def test_generator_out_and_dtype_paths():
+    g, ref = pair(8, 9)
+    buf = np.empty((4, 5))
+    assert g.random(out=buf) is buf and np.array_equal(buf.ravel(), ref.random(20))
+    strided = np.empty(40, np.float32)[::2]
+    g.standard_normal(dtype=np.float32, out=strided)
+    assert np.array_equal(strided, ref.normal(20, np.float32))
+    assert g.random((2, 3), np.float32).shape == (2, 3)
+    assert g.standard_normal(size=(2, 3)).shape == (2, 3)
+    with pytest.raises(TypeError):
+        g.random(out=np.empty(3, np.float32))
+    with pytest.raises(ValueError):
+        g.random(5, out=np.empty(6))
+    with pytest.raises(TypeError):
+        g.random(2, np.int32)
+
+
+def test_generator_falls_through_and_differs_from_numpy_algorithms():
+    g = TandemGenerator(7)
+    plain = Generator(Tandem(7))
+    assert np.array_equal(g.permutation(20), plain.permutation(20))
+    assert np.array_equal(g.exponential(size=5), plain.exponential(size=5))
+    assert g.choice(10, 3).shape == (3,)
+    a, b = TandemGenerator(7), Generator(Tandem(7))
+    assert np.array_equal(a.random(50), b.random(50))
+    assert not np.array_equal(a.standard_normal(50), b.standard_normal(50))
+    assert not np.array_equal(a.integers(0, 0xC0000001, 200, np.uint32), b.integers(0, 0xC0000001, 200, np.uint32))
+
+
+def test_generator_spawn_and_pickle():
+    g = TandemGenerator(5)
+    kids = g.spawn(2)
+    assert all(type(k) is TandemGenerator for k in kids)
+    assert kids[1].bit_generator.key == Tandem(5).split(1).key
+    g.random(10)
+    copy = pickle.loads(pickle.dumps(g))
+    assert type(copy) is TandemGenerator and copy.bit_generator.state == g.bit_generator.state
+    assert np.array_equal(copy.standard_normal(10), g.standard_normal(10))

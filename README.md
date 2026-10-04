@@ -73,6 +73,15 @@ fresh 128 MiB array and its page faults on every call. The two `Generator` rows 
 NumPy's per-element `next_double` call, which bounds any BitGenerator. The hooks fill a
 buffer of 1024 words at a time, with the stream's alignment rules kept for mixed widths.
 
+## AI assistance
+
+This port was written with the help of large language models under human
+direction. The design and the specification are human work, as is much of the
+Julia implementation. The code is tested bit for bit against every vector of
+the specification and against long stream dumps from the Julia implementation,
+and every value must match. The output does not depend on who or what wrote the
+code.
+
 ## License
 
 Apache License 2.0. See `LICENSE` and `NOTICE`.

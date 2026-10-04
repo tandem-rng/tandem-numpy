@@ -1,6 +1,7 @@
 """Agreement with the specification vectors and with dumps written by TandemRNG.jl."""
 
 import json
+import re
 import pickle
 from pathlib import Path
 
@@ -348,3 +349,93 @@ def test_fill_rejects_bad_buffers():
         t.fill(np.empty(4, ">u4"))
     with pytest.raises(TypeError):
         t.u128(out=np.empty(4, np.uint64))
+
+
+C_TESTS = Path(__file__).parent.parent / "external" / "tandem-c" / "tests"
+
+
+def cross_cases(header, name):
+    """(n, want, end_pos) per range of one integer table in a tandem-c cross header."""
+    text = (C_TESTS / header).read_text()
+    table = text.split(name + "[] = {")[1].split("\n};")[0]
+    return [
+        (int(n), [int(x) for x in re.findall(r"(\d+)u", want)], int(end))
+        for n, want, end in re.findall(r"\{(\d+)u(?:ll)?,\s*\{([^}]*)\},\s*(\d+)u\}", table)
+    ]
+
+
+def cross_floats(header, name):
+    text = (C_TESTS / header).read_text()
+    body = text.split(name + "[CROSS_NORMAL_COUNT] = {")[1].split("};")[0]
+    return np.array([float(x) for x in re.findall(r"[-+]?\d[\d.]*(?:e[-+]?\d+)?", body)])
+
+
+def cross_position(header, name):
+    return int(re.search(name + r" = (\d+)u", (C_TESTS / header).read_text()).group(1))
+
+
+def unaligned(seed=42):
+    rng = Tandem(seed)
+    rng.fill(np.empty(1, np.bool_))
+    return rng
+
+
+@pytest.mark.parametrize("dtype, table", [(np.uint32, "CROSS_U32"), (np.uint64, "CROSS_U64")])
+def test_below_scalar_matches_tandem_cuda(dtype, table):
+    cases = cross_cases("cross_below.h", table)
+    assert len(cases) >= 5
+    for n, want, end in cases:
+        rng = unaligned()
+        got = [rng.below(n, dtype=dtype) for _ in range(len(want))]
+        assert got == want and rng.position == end
+
+
+@pytest.mark.parametrize("dtype, table", [(np.uint32, "CROSS_FILL_U32"), (np.uint64, "CROSS_FILL_U64")])
+def test_below_fill_matches_tandem_cuda(dtype, table):
+    cases = cross_cases("cross_fill_below.h", table)
+    assert len(cases) >= 5
+    for n, want, end in cases:
+        rng = unaligned()
+        got = rng.below(n, len(want), dtype)
+        assert got.dtype == dtype and got.tolist() == want and rng.position == end
+        buf = np.empty(len(want), dtype)
+        assert unaligned().below(n, out=buf, dtype=dtype) is buf and buf.tolist() == want
+
+
+def test_below_edges():
+    rng = Tandem(1)
+    assert rng.below(0, dtype=np.uint32) == 0 and rng.position == 32
+    assert rng.below(0) == 0 and rng.position == 128
+    with pytest.raises(ValueError):
+        rng.below(2**32, dtype=np.uint32)
+    with pytest.raises(TypeError):
+        rng.below(5, dtype=np.int64)
+
+
+def test_normal_matches_tandem_cuda():
+    want = cross_floats("cross_normal.h", "CROSS_NORMAL")
+    rng = unaligned()
+    got = np.array([rng.normal() for _ in want])
+    assert np.allclose(got, want, rtol=1e-12, atol=0)
+    assert rng.position == cross_position("cross_normal.h", "CROSS_NORMAL_END_POS")
+    assert np.allclose(unaligned().normal(want.size), want, rtol=1e-12, atol=0)
+
+    want = cross_floats("cross_normal.h", "CROSS_NORMALF")
+    rng = unaligned()
+    got = np.array([rng.normal(dtype=np.float32) for _ in want])
+    # Float libm differs between platforms: 8 ulps and a floor near the zeros of cos.
+    assert np.all(np.abs(got - want) <= 8 * 2.0**-23 * np.abs(want) + 1e-6)
+    assert rng.position == cross_position("cross_normal.h", "CROSS_NORMALF_END_POS")
+
+
+def test_normal_fill_equals_scalars_and_out():
+    for dtype in (np.float64, np.float32):
+        a, b = unaligned(7), unaligned(7)
+        got = a.normal(1000, dtype)
+        assert got.dtype == dtype
+        assert np.array_equal(got, [b.normal(dtype=dtype) for _ in range(1000)])
+        assert a.position == b.position
+        buf = np.empty(10, dtype)
+        assert Tandem(2).normal(out=buf, dtype=dtype) is buf
+    z = Tandem(5).normal(200_000)
+    assert abs(z.mean()) < 0.02 and abs(z.std() - 1) < 0.02

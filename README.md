@@ -23,6 +23,8 @@ w = t.raw(2**20, np.uint32)            # unsigned words of the stream
 t.fill(np.empty((1000, 3), np.complex64))   # any spec type, any contiguous shape
 t.u128(1000)                           # (1000, 2) uint64 rows: low and high half
 t.char(1000)                           # Unicode scalar values as uint32
+t.below(10, 1000)                      # Tandem's bounded integers on [0, 10), uint64
+t.normal(1000, np.float32)             # Tandem's Box-Muller normals
 worker = t.split(7)                    # by index, from the key alone
 kids = t.fork(4)                       # from the current block, parent moves on
 sub = t.sub(3)                         # by purpose identifier
@@ -50,6 +52,20 @@ specification's draws of its dtype, through the C fills with the GIL released. I
 `float32`, `float64`, `complex64`, `complex128`, and `V16` for 128-bit words (low half first).
 `u128(size)` returns the same words as `(size, 2)` `uint64` rows and `char(size)` returns Unicode
 scalar values as `uint32`. `random` and `raw` are unchanged.
+
+`below(n, size, dtype)` and `normal(size, dtype)` are Tandem's own bounded-integer and normal
+contracts, taken from tandem-c and tandem-cuda and not part of the specification. They are not
+`Generator.integers` and `Generator.standard_normal`, which keep NumPy's algorithms over the bit
+generator and give different values.
+
+- `below` draws on `[0, n)` by Lemire's multiply-and-reject over `uint32` or `uint64` draws
+  (`dtype`, default `uint64`). With `size` or `out` it draws element `i` from stream draw `i`
+  and retries a rejected draw on a fallback generator, so it uses exactly one draw per element
+  and the position advances by that. Without them it is one scalar draw, which takes as many
+  draws as the rejection loop needs. `n = 0` returns 0.
+- `normal` is Box-Muller, `sqrt(-2 ln u) cos(2 pi v)`, from two draws of the dtype's width. Values
+  agree with other ports to about `1e-12` relative for `float64` and a few ulps for `float32`,
+  because libm differs.
 
 `at(dtype, i)` returns element `i` of the fill that would start at the current position, for
 `uint32`, `uint64`, `float32`, and `float64`, without moving the generator. `advance_to(p)` and
@@ -79,6 +95,11 @@ the sources change, and `pixi run test` runs the tests.
 
 `tests/test_tandem.py` checks every vector of the specification (`tests/vectors.json`, a copy
 of the spec repository's file) and compares fills and scalar draws with reference stream dumps in `tests/data`.
+The new paths are checked the same way: `fill`, `u128`, and `char` against the dumps of every
+specification type, `at` and `advance_to` against the dumps and against fills from the same
+position, `spawn` against `split`, and `below` and `normal` against the tandem-cuda fixtures in
+`external/tandem-c/tests` (`cross_below.h`, `cross_fill_below.h`, `cross_normal.h`), which the test
+parses.
 CI fails when the vectors drift from upstream or the tandem-c pin is not on tandem-c main.
 `tools/bump.sh` moves the pin to the latest main.
 

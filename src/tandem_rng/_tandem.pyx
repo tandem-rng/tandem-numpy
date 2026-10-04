@@ -32,6 +32,14 @@ cdef extern from "tandem.h":
     void tandem_fill_char(tandem_rng *rng, uint32_t *out, size_t n) nogil
     void tandem_fill_c32(tandem_rng *rng, float *out, size_t n) nogil
     void tandem_fill_c64(tandem_rng *rng, double *out, size_t n) nogil
+    uint32_t tandem_u32_below(tandem_rng *rng, uint32_t n) nogil
+    uint64_t tandem_u64_below(tandem_rng *rng, uint64_t n) nogil
+    double tandem_normal_f64(tandem_rng *rng) nogil
+    float tandem_normal_f32(tandem_rng *rng) nogil
+    void tandem_fill_u32_below(tandem_rng *rng, uint32_t *out, size_t len, uint32_t n) nogil
+    void tandem_fill_u64_below(tandem_rng *rng, uint64_t *out, size_t len, uint64_t n) nogil
+    void tandem_fill_normal_f64(tandem_rng *rng, double *out, size_t n) nogil
+    void tandem_fill_normal_f32(tandem_rng *rng, float *out, size_t n) nogil
     void tandem_fill_u8(tandem_rng *rng, uint8_t *out, size_t n) nogil
     void tandem_fill_u16(tandem_rng *rng, uint16_t *out, size_t n) nogil
     void tandem_fill_u32(tandem_rng *rng, uint32_t *out, size_t n) nogil
@@ -333,6 +341,65 @@ cdef class Tandem(BitGenerator):
         """
         cdef np.ndarray a = _buffer(size, np.uint32, out, (np.uint32,))
         self._fill(a, CODE_CHAR, a.size)
+        return a[()] if size is None and out is None else a
+
+    def below(self, n, size=None, dtype=np.uint64, out=None):
+        """Uniform integers on [0, n) by Tandem's own bounded contract.
+
+        This is Lemire's multiply-and-reject over the stream's uint32 or uint64 draws, the
+        algorithm of tandem-cuda, and is not part of the specification. It is not the
+        algorithm of ``numpy.random.Generator.integers``, which keeps its own method over
+        this bit generator. ``dtype`` is uint32 or uint64 and fixes the draw width.
+
+        With ``size`` or ``out`` the fill draws element i from stream draw i and retries a
+        rejected draw on a fallback generator, so it consumes exactly one draw per element
+        and equals the scalar calls except where a draw is rejected. Without them one scalar
+        draw takes as many draws as it needs. ``n = 0`` returns 0.
+        """
+        cdef np.ndarray a
+        cdef uint64_t bound
+        dtype = np.dtype(dtype)
+        if dtype not in (np.uint32, np.uint64):
+            raise TypeError("dtype must be uint32 or uint64")
+        n = int(n)
+        if not 0 <= n < 2 ** (8 * dtype.itemsize):
+            raise ValueError("n must lie in [0, 2**32) for uint32 or [0, 2**64) for uint64")
+        bound = n
+        flush(&self.st)
+        if size is None and out is None:
+            if dtype == np.uint32:
+                return np.uint32(tandem_u32_below(&self.st.rng, <uint32_t>bound))
+            return np.uint64(tandem_u64_below(&self.st.rng, bound))
+        a = _buffer(size, dtype, out, (np.uint32, np.uint64))
+        cdef void *p = np.PyArray_DATA(a)
+        cdef size_t count = a.size
+        if dtype == np.uint32:
+            with nogil:
+                tandem_fill_u32_below(&self.st.rng, <uint32_t *>p, count, <uint32_t>bound)
+        else:
+            with nogil:
+                tandem_fill_u64_below(&self.st.rng, <uint64_t *>p, count, bound)
+        return a
+
+    def normal(self, size=None, dtype=np.float64, out=None):
+        """Standard normal draws by Tandem's own Box-Muller contract.
+
+        Each value takes two stream draws of ``dtype``'s width: sqrt(-2 ln u) cos(2 pi v)
+        with u in (0, 1]. This matches tandem-cuda and is not part of the specification.
+        values agree across ports to about 1e-12 relative for float64 and a few ulps for
+        float32, since libm differs. It is not ``numpy.random.Generator.standard_normal``, which
+        keeps its own ziggurat over this bit generator.
+        """
+        cdef np.ndarray a = _buffer(size, dtype, out, (np.float64, np.float32))
+        cdef void *p = np.PyArray_DATA(a)
+        cdef size_t n = a.size
+        flush(&self.st)
+        if a.dtype == np.float64:
+            with nogil:
+                tandem_fill_normal_f64(&self.st.rng, <double *>p, n)
+        else:
+            with nogil:
+                tandem_fill_normal_f32(&self.st.rng, <float *>p, n)
         return a[()] if size is None and out is None else a
 
     cdef void _fill(self, np.ndarray a, int code, size_t n):

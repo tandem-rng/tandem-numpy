@@ -115,19 +115,26 @@ CI fails when the vectors drift from upstream or the tandem-c pin is not on tand
 
 ## Speed
 
-Apple M4, one thread, `pixi run bench`, 2^24 Float64 draws, minimum of seven runs:
+Apple M4, one thread, `pixi run bench`, 2^24 elements per call, minimum of seven runs, GiB/s of
+output. Every call allocates its array.
 
-| | GiB/s |
-|---|---|
-| `Tandem(42).random(out=buf)`, preallocated | 17.9 |
-| `Tandem(42).random(n)`, new array each call | 11.1 |
-| `Generator(Tandem(42)).random(n)` | 4.5 |
-| `Generator(PCG64(42)).random(n)` | 2.5 |
+| | Tandem fill | `Generator(Tandem(42))` | `Generator(PCG64(42))` |
+|---|---|---|---|
+| `random` float64 | 9.4 | 4.1 | 2.2 |
+| `random` float32 | 16.4 | 2.9 | 2.3 |
+| `integers(0, 1000)` int32 | 7.7 | 3.0 | 2.3 |
+| `integers(0, 1000)` int64 | 5.6 | 4.8 | 3.7 |
+| `standard_normal` float64 | 3.9 | 1.9 | 1.9 |
+| `standard_normal` float32 | 5.4 | 1.1 | 1.5 |
+| raw `uint64` words | 10.5 | 3.9 | 2.1 |
 
-The preallocated fill is the C fill with the GIL released. The allocating row pays for a
-fresh 128 MiB array and its page faults on every call. The two `Generator` rows go through
-NumPy's per-element `next_double` call, which bounds any BitGenerator. The hooks fill a
-buffer of 1024 words at a time, with the stream's alignment rules kept for mixed widths.
+The Tandem column calls the C fills of the bit generator with the GIL released: `random`,
+`below(1000, n, dtype)`, `normal`, and `raw`. The `Generator` columns are NumPy's own samplers.
+`Generator` calls the bit generator one value at a time, through `next_double`, `next_uint32`,
+and `next_uint64`, and runs its own ziggurat for normals and its own Lemire method for integers.
+Its speed is therefore bounded by that call and does not use the C fills, and its integers and
+normals are NumPy's values, not Tandem's. The hooks fill a buffer of 1024 words at a time, with
+the stream's alignment rules kept for mixed widths.
 
 ## AI assistance
 

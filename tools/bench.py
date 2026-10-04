@@ -1,37 +1,50 @@
-"""Throughput of 2**24 Float64 draws: Tandem fills into a buffer and a new array, then Generator rows."""
+"""Throughput in GiB/s of output at 2**24 elements, best of seven, as a markdown table.
+
+Each row draws a new array. The Tandem column calls the BitGenerator's own C fill, the
+Generator columns call NumPy's samplers over Tandem and over PCG64. Run it on a quiet machine.
+"""
 
 import time
 
 import numpy as np
-from numpy.random import Generator, PCG64
+from numpy.random import PCG64, Generator
 
 from tandem_rng import Tandem
 
 N = 2**24
-BYTES = N * 8
 
 
-def best(fn, runs=7):
+def best(fn, nbytes, runs=7):
     fn()
-    t = min(timeit(fn) for _ in range(runs))
-    return BYTES / t / 2**30
+    times = []
+    for _ in range(runs):
+        t0 = time.perf_counter()
+        fn()
+        times.append(time.perf_counter() - t0)
+    return nbytes / min(times) / 2**30
 
 
-def timeit(fn):
-    t0 = time.perf_counter()
-    fn()
-    return time.perf_counter() - t0
+t = Tandem(42)
+gt = Generator(Tandem(42))
+gp = Generator(PCG64(42))
+f32, f64 = np.float32, np.float64
 
-
-tandem = Tandem(42)
-buf = np.empty(N)
-gen_tandem = Generator(Tandem(42))
-gen_pcg = Generator(PCG64(42))
+# (label, bytes per element, Tandem fill, Generator over Tandem, Generator over PCG64)
 rows = [
-    ("Tandem(42).random(out=buf)", best(lambda: tandem.random(out=buf))),
-    ("Tandem(42).random(n)", best(lambda: tandem.random(N))),
-    ("Generator(Tandem(42)).random(n)", best(lambda: gen_tandem.random(N))),
-    ("Generator(PCG64(42)).random(n)", best(lambda: gen_pcg.random(N))),
+    ("random float64", 8, lambda: t.random(N), lambda: gt.random(N), lambda: gp.random(N)),
+    ("random float32", 4, lambda: t.random(N, f32), lambda: gt.random(N, f32), lambda: gp.random(N, f32)),
+    ("integers(0, 1000) int32", 4, lambda: t.below(1000, N, np.uint32),
+     lambda: gt.integers(0, 1000, N, np.int32), lambda: gp.integers(0, 1000, N, np.int32)),
+    ("integers(0, 1000) int64", 8, lambda: t.below(1000, N),
+     lambda: gt.integers(0, 1000, N), lambda: gp.integers(0, 1000, N)),
+    ("standard_normal float64", 8, lambda: t.normal(N), lambda: gt.standard_normal(N),
+     lambda: gp.standard_normal(N)),
+    ("standard_normal float32", 4, lambda: t.normal(N, f32), lambda: gt.standard_normal(N, f32),
+     lambda: gp.standard_normal(N, f32)),
+    ("raw uint64 words", 8, lambda: t.raw(N), lambda: gt.bit_generator.random_raw(N),
+     lambda: gp.bit_generator.random_raw(N)),
 ]
-for name, gibs in rows:
-    print(f"{name:36s} {gibs:6.2f} GiB/s")
+print("| 2^24 elements | Tandem fill | Generator(Tandem) | Generator(PCG64) |")
+print("|---|---|---|---|")
+for name, width, *fns in rows:
+    print(f"| {name} | " + " | ".join(f"{best(f, N * width):.1f}" for f in fns) + " |")

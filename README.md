@@ -60,8 +60,9 @@ generator and give different values.
 
 - `below` draws on `[0, n)` by Lemire's multiply-and-reject over `uint32` or `uint64` draws
   (`dtype`, default `uint64`). With `size` or `out` it draws element `i` from stream draw `i`
-  and retries a rejected draw on a fallback generator, so it uses exactly one draw per element
-  and the position advances by that. Without them it is one scalar draw, which takes as many
+  and retries a rejected draw on a fallback generator keyed by the draw's global index, so it
+  uses exactly one draw per element, the position advances by that, and a fill cut at any element
+  boundary equals the whole fill. Without them it is one scalar draw, which takes as many
   draws as the rejection loop needs. `n = 0` returns 0.
 - `normal` is Box-Muller on pairs of uniform draws `a`, `b` of the dtype: with
   `r = sqrt(-2 ln(1 - a))` the pair is `(r cos 2 pi b, r sin 2 pi b)`. Pair `j` gives elements

@@ -352,8 +352,9 @@ cdef class Tandem(BitGenerator):
         this bit generator. ``dtype`` is uint32 or uint64 and fixes the draw width.
 
         With ``size`` or ``out`` the fill draws element i from stream draw i and retries a
-        rejected draw on a fallback generator, so it consumes exactly one draw per element
-        and equals the scalar calls except where a draw is rejected. Without them one scalar
+        rejected draw on a fallback generator keyed by the draw's global index, so a fill cut
+        at any element boundary equals the whole fill. It consumes exactly one draw per
+        element and equals the scalar calls except where a draw is rejected. Without them one scalar
         draw takes as many draws as it needs. ``n = 0`` returns 0.
         """
         cdef np.ndarray a

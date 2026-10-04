@@ -1,4 +1,4 @@
-"""Throughput in GiB/s of output at 2**24 elements, best of seven, as a markdown table.
+"""Throughput in GiB/s of output at 2**22 elements, best of five, as a markdown table.
 
 Each row draws a new array. The Tandem column calls the BitGenerator's own C fill and
 TandemGenerator routes the sampler names through the fills. The Generator columns call NumPy's
@@ -12,10 +12,10 @@ from numpy.random import PCG64, Generator
 
 from tandem_rng import Tandem, TandemGenerator
 
-N = 2**24
+N = 2**22
 
 
-def best(fn, nbytes, runs=7):
+def best(fn, nbytes, runs=5):
     fn()
     times = []
     for _ in range(runs):
@@ -46,7 +46,7 @@ rows = [
     ("raw uint64 words", 8, lambda: t.raw(N), None, lambda: gt.bit_generator.random_raw(N),
      lambda: gp.bit_generator.random_raw(N)),
 ]
-print("| 2^24 elements | Tandem fill | TandemGenerator | Generator(Tandem) | Generator(PCG64) |")
+print("| 2^22 elements | Tandem fill | TandemGenerator | Generator(Tandem) | Generator(PCG64) |")
 print("|---|---|---|---|---|")
 for name, width, *fns in rows:
     print(f"| {name} | " + " | ".join("-" if f is None else f"{best(f, N * width):.1f}" for f in fns) + " |")

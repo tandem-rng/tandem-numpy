@@ -115,6 +115,11 @@ The reference C implementation sits in the `external/tandem-c` git submodule. Cl
 `git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone.
 GitHub's ZIP download omits submodules and does not build.
 
+The submodule is pinned at tandem-c `8f1f057`. The extension is built with `-ffp-contract=off` and no
+`-mfma`: the normal loop uses explicit fused multiply-adds, so its bits do not depend on the
+compiler, and on x86 the AVX2 and FMA copy is chosen at run time, also in a wheel built for a
+baseline x86-64.
+
 The build uses meson-python and needs a C compiler. For development, `pixi install` creates an
 environment with the package installed editable, which rebuilds the extension on import when
 the sources change, and `pixi run test` runs the tests.
@@ -127,25 +132,27 @@ The new paths are checked the same way: `fill`, `u128`, and `char` against the d
 specification type, `at` and `advance_to` against the dumps and against fills from the same
 position, `spawn` against `split`, and `below` and `normal` against the tandem-cuda fixtures in
 `external/tandem-c/tests` (`cross_below.h`, `cross_fill_below.h`, `cross_normal.h`), which the test
-parses. `TandemGenerator` is checked against the same fills and fixtures, including a
-`integers` call cut at arbitrary boundaries against the whole call.
+parses. `TandemGenerator` is checked against the same fills and fixtures, including `integers` calls of every dtype, with and without `endpoint`, cut at arbitrary
+boundaries against the whole call. A hash test compares the `standard_normal` float64 and float32
+fills with the bytes of tandem-c's `tools/dump_normals.c` (FNV-1a `0x9414e1315e2653be`, checked here
+as SHA-256), so they are the same bits on every compiler.
 CI fails when the vectors drift from upstream or the tandem-c pin is not on tandem-c main.
 `tools/bump.sh` moves the pin to the latest main.
 
 ## Speed
 
-Apple M4, one thread, `pixi run bench`, 2^24 elements per call, minimum of seven runs, GiB/s of
+Apple M4, one thread, `pixi run bench`, 2^22 elements per call, minimum of five runs, GiB/s of
 output. Every call allocates its array.
 
 | | Tandem fill | `TandemGenerator(42)` | `Generator(Tandem(42))` | `Generator(PCG64(42))` |
 |---|---|---|---|---|
-| `random` float64 | 10.1 | 9.7 | 4.1 | 2.2 |
-| `random` float32 | 16.3 | 16.3 | 2.9 | 2.3 |
-| `integers(0, 1000)` int32 | 7.6 | 7.6 | 3.0 | 2.3 |
-| `integers(0, 1000)` int64 | 5.6 | 7.8 | 4.8 | 3.7 |
-| `standard_normal` float64 | 3.9 | 3.9 | 2.0 | 1.8 |
-| `standard_normal` float32 | 5.4 | 5.4 | 1.2 | 1.5 |
-| raw `uint64` words | 10.9 | - | 4.2 | 2.2 |
+| `random` float64 | 16.7 | 16.5 | 4.9 | 2.5 |
+| `random` float32 | 16.5 | 16.6 | 3.1 | 2.4 |
+| `integers(0, 1000)` int32 | 7.8 | 7.7 | 3.1 | 2.3 |
+| `integers(0, 1000)` int64 | 7.5 | 12.7 | 5.9 | 4.5 |
+| `standard_normal` float64 | 4.9 | 4.9 | 2.2 | 2.0 |
+| `standard_normal` float32 | 5.5 | 5.5 | 1.1 | 1.5 |
+| raw `uint64` words | 18.6 | - | 4.9 | 2.4 |
 
 The Tandem column calls the C fills of the bit generator with the GIL released: `random`,
 `below(1000, n, dtype)` at the dtype's width, `normal`, and `raw`. `TandemGenerator` routes the sampler names through

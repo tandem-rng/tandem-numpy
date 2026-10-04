@@ -1,5 +1,6 @@
 """Agreement with the specification vectors and with dumps written by TandemRNG.jl."""
 
+import hashlib
 import json
 import re
 import pickle
@@ -577,14 +578,37 @@ def test_generator_normal_matches_cross_fixtures():
     assert g.bit_generator.position == cross_position("cross_normal.h", "CROSS_NORMAL_END_POS")
 
 
-def test_integers_cut_equals_whole():
+@pytest.mark.parametrize("endpoint", [False, True])
+@pytest.mark.parametrize("dtype", [np.int8, np.uint8, np.int16, np.uint16, np.int32, np.uint32,
+                                   np.int64, np.uint64])
+def test_integers_cut_equals_whole(dtype, endpoint):
+    # The widest range of each dtype that is not a full word, so the 32-bit and 64-bit
+    # paths both reject draws (about a quarter for the two widest ranges), at a start that
+    # is not word aligned.
+    info = np.iinfo(dtype)
+    low = info.min
+    high = low + (info.max - low) // 4 * 3 if info.bits >= 32 else info.max
     cuts = (37, 1, 100, 62)
-    for dtype, high in ((np.uint32, 0xC0000001), (np.uint64, 0xC000000000000001)):
-        whole, _ = pair(5, 1)
-        want = whole.integers(0, high, sum(cuts), dtype)
-        g, _ = pair(5, 1)
-        parts = [g.integers(0, high, c, dtype) for c in cuts]
-        assert np.array_equal(np.concatenate(parts), want)
+    whole, _ = pair(5, 1)
+    want = whole.integers(low, high, sum(cuts), dtype, endpoint=endpoint)
+    g, _ = pair(5, 1)
+    parts = [g.integers(low, high, c, dtype, endpoint=endpoint) for c in cuts]
+    assert want.dtype == dtype and np.array_equal(np.concatenate(parts), want)
+    assert g.bit_generator.position == whole.bit_generator.position
+
+
+def test_standard_normal_bits_match_tandem_c():
+    # The bytes tandem-c's tools/dump_normals.c writes: f64 then f32 fills of 2e6 - 1 values
+    # from five positions. Their FNV-1a hash is 0x9414e1315e2653be, recorded in
+    # tandem-c's tests/test_normal_bits.c. SHA-256 over the same bytes is checked here
+    # because a byte loop in Python is slow.
+    h = hashlib.sha256()
+    for start in (0, 1, 77, 12345, 1 << 30):
+        g = TandemGenerator(Tandem(2026 + (7 << 64)))
+        g.bit_generator.position = start
+        h.update(g.standard_normal(2_000_000 - 1).tobytes())
+        h.update(g.standard_normal(2_000_000 - 1, np.float32).tobytes())
+    assert h.hexdigest() == "cfae418807a7d5f91ecd3e42c33a00943690c6e4b888ee39206738783efe9ded"
 
 
 def test_generator_out_and_dtype_paths():

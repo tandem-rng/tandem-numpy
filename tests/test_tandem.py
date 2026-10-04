@@ -268,3 +268,83 @@ def test_position_setter_and_advance_to():
     for bad in (-1, 2**63):
         with pytest.raises(ValueError):
             rng.advance_to(bad)
+
+
+def filled(dtype, n):
+    out = np.empty(n, dtype)
+    assert Tandem(42).fill(out) is out
+    return out
+
+
+def test_fill_bool_u8_match_dumps():
+    want = load("seed42_K32_bool.bin", np.bool_)
+    assert np.array_equal(filled(np.bool_, want.size), want)
+    want = load("seed42_K32_u8.bin", np.uint8)
+    assert np.array_equal(filled(np.uint8, want.size), want)
+    # Signed integers carry the unsigned draw's bits.
+    assert np.array_equal(filled(np.int8, want.size).view(np.uint8), want)
+
+
+@pytest.mark.parametrize("signed, unsigned", [(np.int16, np.uint16), (np.int32, np.uint32), (np.int64, np.uint64)])
+def test_fill_signed_reinterprets_unsigned(signed, unsigned):
+    assert np.array_equal(filled(signed, 777).view(unsigned), Tandem(42).raw(777, unsigned))
+
+
+def test_fill_f16_matches_dump():
+    want = load("seed42_K32_f16bits.bin", np.uint16)
+    got = filled(np.float16, want.size)
+    assert np.array_equal(got.view(np.uint16), want)
+    assert (got >= 0).all() and (got < 1).all()
+
+
+def test_fill_complex_matches_dumps():
+    want = load("seed42_K32_c32.bin", np.complex64)
+    assert np.array_equal(filled(np.complex64, want.size), want)
+    want = load("seed42_K32_c64.bin", np.complex128)
+    assert np.array_equal(filled(np.complex128, want.size), want)
+
+
+def test_u128_matches_dump_and_bytes_fill():
+    want = load("seed42_K32_u128.bin", np.uint64).reshape(-1, 2)
+    assert np.array_equal(Tandem(42).u128(want.shape[0]), want)
+    assert np.array_equal(Tandem(42).u128(), want[0])
+    buf = np.empty((want.shape[0], 2), np.uint64)
+    assert Tandem(42).u128(out=buf) is buf and np.array_equal(buf, want)
+    v = np.empty(want.shape[0], "V16")
+    Tandem(42).fill(v)
+    assert v.tobytes() == want.tobytes()
+
+
+def test_char_matches_dump():
+    want = load("seed42_K32_char.bin", np.uint32)
+    assert np.array_equal(Tandem(42).char(want.size), want)
+    assert int(Tandem(42).char()) == want[0]
+
+
+def test_fill_matches_typed_fills_and_advances():
+    # Any shape fills in C order, from an unaligned start, and leaves the position right.
+    t, ref = Tandem(3), Tandem(3)
+    t.raw(1, np.uint8)
+    ref.raw(1, np.uint8)
+    a = np.empty((4, 5), np.float32)
+    t.fill(a)
+    assert np.array_equal(a.ravel(), ref.random(20, np.float32))
+    assert t.position == ref.position
+    b = np.empty(9, np.bool_)
+    t.fill(b)
+    assert np.array_equal(b, np.asarray([ref.fill(np.empty(1, np.bool_))[0] for _ in range(9)]))
+    assert t.position == ref.position
+
+
+def test_fill_rejects_bad_buffers():
+    t = Tandem(1)
+    with pytest.raises(TypeError):
+        t.fill(np.empty(4, "M8[s]"))
+    with pytest.raises(TypeError):
+        t.fill([0.0] * 4)
+    with pytest.raises(ValueError):
+        t.fill(np.empty(8)[::2])
+    with pytest.raises(ValueError):
+        t.fill(np.empty(4, ">u4"))
+    with pytest.raises(TypeError):
+        t.u128(out=np.empty(4, np.uint64))

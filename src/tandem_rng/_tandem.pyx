@@ -11,6 +11,9 @@ from numpy.random import SeedSequence
 
 np.import_array()
 
+cdef extern from "stdbool.h":
+    ctypedef unsigned char c_bool "bool"
+
 cdef extern from "tandem.h":
     ctypedef struct tandem_rng:
         uint64_t pos
@@ -22,6 +25,13 @@ cdef extern from "tandem.h":
     uint32_t tandem_next_u32(tandem_rng *rng) nogil
     uint64_t tandem_next_u64(tandem_rng *rng) nogil
     double tandem_next_f64(tandem_rng *rng) nogil
+    void tandem_fill_bool(tandem_rng *rng, c_bool *out, size_t n) nogil
+    # tandem_u128 is two uint64 halves, so a uint64 pointer has its layout.
+    void tandem_fill_u128(tandem_rng *rng, uint64_t *out, size_t n) nogil
+    void tandem_fill_f16_bits(tandem_rng *rng, uint16_t *out, size_t n) nogil
+    void tandem_fill_char(tandem_rng *rng, uint32_t *out, size_t n) nogil
+    void tandem_fill_c32(tandem_rng *rng, float *out, size_t n) nogil
+    void tandem_fill_c64(tandem_rng *rng, double *out, size_t n) nogil
     void tandem_fill_u8(tandem_rng *rng, uint8_t *out, size_t n) nogil
     void tandem_fill_u16(tandem_rng *rng, uint16_t *out, size_t n) nogil
     void tandem_fill_u32(tandem_rng *rng, uint32_t *out, size_t n) nogil
@@ -86,6 +96,12 @@ cdef inline void flush(buffered *b) noexcept nogil:
     b.rng.pos = logical_position(b)
     b.left = 0
     b.has_pending = False
+
+
+# Fill kinds, one per C fill.
+cdef enum:
+    CODE_BOOL, CODE_U8, CODE_U16, CODE_U32, CODE_U64, CODE_F16, CODE_F32, CODE_F64
+    CODE_C32, CODE_C64, CODE_U128, CODE_CHAR
 
 
 cdef class Tandem(BitGenerator):
@@ -278,6 +294,95 @@ cdef class Tandem(BitGenerator):
             else:
                 tandem_fill_u8(&self.st.rng, <uint8_t *>p, n)
         return a[()] if size is None and out is None else a
+
+
+    def fill(self, out):
+        """Fill a contiguous array in place with the stream's draws of its dtype.
+
+        Supported dtypes: bool, int8 to int64 and uint8 to uint64 (the unsigned draw's
+        bits), float16, float32, float64, complex64, complex128, and ``V16`` for 128-bit
+        words stored as low then high 64-bit half. The array may have any shape and is
+        filled in C order. It must be writeable and native-endian. Returns ``out``.
+        """
+        cdef np.ndarray a = _contiguous(out)
+        self._fill(a, _code(a.dtype), a.size)
+        return out
+
+    def u128(self, size=None, out=None):
+        """Unsigned 128-bit draws as rows of (low, high) uint64 halves.
+
+        ``out`` is a C-contiguous uint64 array of shape (n, 2), filled in place. Without
+        ``size`` and ``out`` the result has shape (2,).
+        """
+        cdef np.ndarray a
+        if out is None:
+            a = np.empty((1 if size is None else size, 2), dtype=np.uint64)
+        else:
+            a = _contiguous(out)
+            if a.dtype != np.uint64 or a.ndim != 2 or a.shape[1] != 2:
+                raise TypeError("out must be a uint64 array of shape (n, 2)")
+            if size is not None and a.shape[0] != size:
+                raise ValueError("size does not match the shape of out")
+        self._fill(a, CODE_U128, a.shape[0])
+        return a[0] if size is None and out is None else a
+
+    def char(self, size=None, out=None):
+        """Unicode scalar values as uint32, 64 stream bits per draw.
+
+        ``out`` is a C-contiguous one-dimensional uint32 array, filled in place.
+        """
+        cdef np.ndarray a = _buffer(size, np.uint32, out, (np.uint32,))
+        self._fill(a, CODE_CHAR, a.size)
+        return a[()] if size is None and out is None else a
+
+    cdef void _fill(self, np.ndarray a, int code, size_t n):
+        cdef void *p = np.PyArray_DATA(a)
+        flush(&self.st)
+        with nogil:
+            fill_code(&self.st.rng, code, p, n)
+
+
+cdef void fill_code(tandem_rng *rng, int code, void *p, size_t n) noexcept nogil:
+    if code == CODE_BOOL: tandem_fill_bool(rng, <c_bool *>p, n)
+    elif code == CODE_U8: tandem_fill_u8(rng, <uint8_t *>p, n)
+    elif code == CODE_U16: tandem_fill_u16(rng, <uint16_t *>p, n)
+    elif code == CODE_U32: tandem_fill_u32(rng, <uint32_t *>p, n)
+    elif code == CODE_U64: tandem_fill_u64(rng, <uint64_t *>p, n)
+    elif code == CODE_F16: tandem_fill_f16_bits(rng, <uint16_t *>p, n)
+    elif code == CODE_F32: tandem_fill_f32(rng, <float *>p, n)
+    elif code == CODE_F64: tandem_fill_f64(rng, <double *>p, n)
+    elif code == CODE_C32: tandem_fill_c32(rng, <float *>p, n)
+    elif code == CODE_C64: tandem_fill_c64(rng, <double *>p, n)
+    elif code == CODE_U128: tandem_fill_u128(rng, <uint64_t *>p, n)
+    else: tandem_fill_char(rng, <uint32_t *>p, n)
+
+
+cdef int _code(dtype) except -1:
+    kind, w = dtype.kind, dtype.itemsize
+    if kind == "b":
+        return CODE_BOOL
+    if kind in "iu":
+        # Signed draws are the unsigned draw's bits.
+        codes = {1: CODE_U8, 2: CODE_U16, 4: CODE_U32, 8: CODE_U64}
+    elif kind == "f":
+        codes = {2: CODE_F16, 4: CODE_F32, 8: CODE_F64}
+    elif kind == "c":
+        codes = {8: CODE_C32, 16: CODE_C64}
+    elif kind == "V" and dtype.names is None:
+        codes = {16: CODE_U128}
+    else:
+        codes = {}
+    if w not in codes:
+        raise TypeError(f"unsupported dtype {dtype}")
+    return codes[w]
+
+
+cdef np.ndarray _contiguous(out):
+    if not isinstance(out, np.ndarray):
+        raise TypeError("out must be an ndarray")
+    if not out.flags.c_contiguous or not out.flags.writeable or not out.dtype.isnative:
+        raise ValueError("out must be a writeable, C-contiguous, native-endian array")
+    return out
 
 
 cdef np.ndarray _buffer(size, dtype, out, allowed):

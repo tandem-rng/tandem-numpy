@@ -20,6 +20,9 @@ t = Tandem(42)
 u = t.random(2**20)                    # the stream's Float64 draws, fast fill
 t.random(out=u)                        # or fill a preallocated array in place
 w = t.raw(2**20, np.uint32)            # unsigned words of the stream
+t.fill(np.empty((1000, 3), np.complex64))   # any spec type, any contiguous shape
+t.u128(1000)                           # (1000, 2) uint64 rows: low and high half
+t.char(1000)                           # Unicode scalar values as uint32
 worker = t.split(7)                    # by index, from the key alone
 kids = t.fork(4)                       # from the current block, parent moves on
 sub = t.sub(3)                         # by purpose identifier
@@ -40,6 +43,13 @@ which `Generator.spawn` calls, overrides NumPy's `SeedSequence` spawning with th
 specification's split: the first call returns `split(0)` to `split(n - 1)`, and later calls
 continue the numbering. The children have no seed sequence, so their `_seed_seq` is `None`.
 The count of earlier `spawn` calls is not part of `state` or of a pickle.
+
+`fill(out)` fills a writeable, C-contiguous, native-endian array of any shape in place with the
+specification's draws of its dtype, through the C fills with the GIL released. It accepts
+`bool`, `int8` to `int64` and `uint8` to `uint64` (the unsigned draw's bits), `float16`,
+`float32`, `float64`, `complex64`, `complex128`, and `V16` for 128-bit words (low half first).
+`u128(size)` returns the same words as `(size, 2)` `uint64` rows and `char(size)` returns Unicode
+scalar values as `uint32`. `random` and `raw` are unchanged.
 
 `at(dtype, i)` returns element `i` of the fill that would start at the current position, for
 `uint32`, `uint64`, `float32`, and `float64`, without moving the generator. `advance_to(p)` and

@@ -87,6 +87,8 @@ output. Every call allocates its array.
 | `standard_exponential` float32 | 6.6 | 6.6 | 1.2 | 1.3 |
 | raw `uint64` words | 18.6 | - | 4.9 | 2.4 |
 
+Longer notes on use, install, tests, and speed are in [docs/notes.md](docs/notes.md).
+
 ## AI assistance
 
 This port was written with the help of large language models under human

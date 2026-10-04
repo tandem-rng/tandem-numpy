@@ -196,3 +196,26 @@ def test_generator_draws_match_spec_alignment():
 
 def ref_u64(words, i):
     return int(words[i]) | int(words[i + 1]) << 32
+
+
+def test_spawn_is_split_by_index():
+    # Spawned children follow the specification's split, not SeedSequence spawning.
+    parent = Tandem(11, K=8)
+    kids = parent.spawn(3)
+    for i, kid in enumerate(kids):
+        want = Tandem(11, K=8).split(i)
+        assert kid.key == want.key and kid.position == 0 and kid.chunk_length == 8
+        assert kid._seed_seq is None
+        assert np.array_equal(kid.random(50), want.random(50))
+    assert [k.key for k in parent.spawn(2)] == [Tandem(11, K=8).split(i).key for i in (3, 4)]
+    assert parent.position == 0
+
+
+def test_generator_spawn_uses_split():
+    gen = Generator(Tandem(5))
+    kids = gen.spawn(2)
+    assert all(isinstance(k, Generator) for k in kids)
+    assert [k.bit_generator.key for k in kids] == [Tandem(5).split(i).key for i in range(2)]
+    assert np.array_equal(kids[1].random(10), Tandem(5).split(1).random(10))
+    kid = pickle.loads(pickle.dumps(kids[0].bit_generator))
+    assert kid.key == kids[0].bit_generator.key

@@ -94,9 +94,11 @@ cdef class Tandem(BitGenerator):
     """
 
     cdef buffered st
+    cdef object _spawned
 
     def __init__(self, seed=None, K=32):
         BitGenerator.__init__(self, seed)
+        self._spawned = 0
         if not isinstance(seed, int):
             # Entropy and SeedSequence both reduce to 128 bits treated as an integer seed.
             words = self._seed_seq.generate_state(4, np.uint32)
@@ -123,6 +125,8 @@ cdef class Tandem(BitGenerator):
     cdef Tandem _wrap(tandem_rng s):
         cdef Tandem rng = Tandem(0, tandem_chunk_length(&s))
         rng.st.rng = s
+        # The key came from the specification's split, not from a seed sequence.
+        rng._seed_seq = None
         return rng
 
     @property
@@ -166,12 +170,28 @@ cdef class Tandem(BitGenerator):
         self.st.has_pending = False
 
     def split(self, index):
-        """Child by index, from the key alone. Position is preserved."""
+        """Child by index, from the key alone. It starts at position 0 with the same ``K``."""
         return Tandem._wrap(tandem_split(&self.st.rng, _check_u64(index)))
 
     def sub(self, purpose):
-        """Child for a purpose identifier. Position is preserved."""
+        """Child for a purpose identifier. It starts at position 0 with the same ``K``."""
         return Tandem._wrap(tandem_sub(&self.st.rng, _check_u64(purpose)))
+
+    def spawn(self, n_children):
+        """``n_children`` independent generators by the specification's split.
+
+        Children are ``split(i)``, numbered on from the earlier calls of ``spawn``, so
+        repeated calls never return the same stream. This replaces NumPy's ``SeedSequence``
+        spawning: the children have no seed sequence and ``_seed_seq`` is ``None``. The
+        count of earlier calls is not part of ``state`` or of a pickle. It restarts at 0
+        in a restored generator.
+        """
+        n = int(n_children)
+        if n < 0 or self._spawned + n > 2**64:
+            raise ValueError("n_children must be non-negative and keep the index below 2**64")
+        first = self._spawned
+        self._spawned += n
+        return [self.split(first + i) for i in range(n)]
 
     def fork(self, n):
         """``n`` children from the current block. The parent moves past the block."""

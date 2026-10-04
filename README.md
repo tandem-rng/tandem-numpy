@@ -22,6 +22,8 @@ t.random(out=u)                        # or fill a preallocated array in place
 w = t.raw(2**20, np.uint32)            # unsigned words of the stream
 worker = t.split(7)                    # by index, from the key alone
 kids = t.fork(4)                       # from the current block, parent moves on
+sub = t.sub(3)                         # by purpose identifier
+streams = Generator(t).spawn(4)        # Generators over t.split(0) .. t.split(3)
 t.key, t.position, t.chunk_length      # transport form
 ```
 
@@ -30,6 +32,12 @@ for OS entropy. An integer goes through the specification's seed whitening, so `
 produces the specification's stream for seed 42. A
 `SeedSequence` or `None` reduces to 128 bits that are treated as the integer seed.
 `Tandem.from_key(key, position, K)` takes the transport form directly.
+
+`split`, `sub`, and `fork` return children at position 0 with the parent's `K`. `spawn(n)`,
+which `Generator.spawn` calls, overrides NumPy's `SeedSequence` spawning with the
+specification's split: the first call returns `split(0)` to `split(n - 1)`, and later calls
+continue the numbering. The children have no seed sequence, so their `_seed_seq` is `None`.
+The count of earlier `spawn` calls is not part of `state` or of a pickle.
 
 NumPy's `Generator.random()` computes `(next_uint64 >> 11) * 2**-53` and
 `random(dtype=np.float32)` computes `(next_uint32 >> 8) * 2**-24`. Both are the

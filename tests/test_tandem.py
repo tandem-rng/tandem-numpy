@@ -563,13 +563,26 @@ def test_integers_scalar_and_full_range():
     g, ref = pair(4, 5)
     assert np.array_equal(g.integers(-2**31, 2**31, 20, np.int32),
                           (ref.raw(20, np.uint32) + np.uint32(2**31)).view(np.int32))
-    for args in [(5, 5), (5, 4)]:
-        with pytest.raises(ValueError):
-            g.integers(*args)
-    with pytest.raises(ValueError):
-        g.integers(0, 300, dtype=np.uint8)
-    with pytest.raises(TypeError):
-        g.integers(1.5, 5)
+
+
+@pytest.mark.parametrize("args, kwargs", [
+    ((10,), {}), ((np.array(10),), {}), ((0.7, 10.9), {}), ((0,), {}), ((5, 5), {}),
+    ((5, 5), {"endpoint": True}), ((5, 4), {"endpoint": True}), ((-129, 0), {"dtype": np.int8}),
+    ((0, 257), {"dtype": np.uint8}), ((0, 10), {"dtype": np.float64}), ((0, 10), {"dtype": ">i4"}),
+    ((5, 5), {"size": 0}), ((0, 10), {"size": ()}), ((0, 10), {"dtype": int}),
+    ((0, 1), {"dtype": bool, "endpoint": True}), ((0, 2**64), {"dtype": np.uint64}),
+])
+def test_integers_handles_arguments_as_numpy(args, kwargs):
+    # Result type, dtype and shape, or the exception, equal those of numpy.random.Generator.
+    def outcome(gen):
+        try:
+            r = gen.integers(*args, **kwargs)
+        except (TypeError, ValueError) as e:
+            return type(e), str(e)
+        return type(r), getattr(r, "dtype", None), np.shape(r)
+    assert outcome(TandemGenerator(1)) == outcome(np.random.default_rng(1))
+    # Float bounds truncate, as in NumPy.
+    assert np.array_equal(TandemGenerator(1).integers(0.7, 10.9, 50), TandemGenerator(1).integers(0, 10, 50))
 
 
 @pytest.mark.parametrize("dtype, table", [(np.uint32, "CROSS_FILL_U32"), (np.uint64, "CROSS_FILL_U64")])

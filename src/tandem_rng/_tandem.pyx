@@ -384,8 +384,12 @@ cdef class Tandem(BitGenerator):
     def normal(self, size=None, dtype=np.float64, out=None):
         """Standard normal draws by Tandem's own Box-Muller contract.
 
-        Each value takes two stream draws of ``dtype``'s width: sqrt(-2 ln u) cos(2 pi v)
-        with u in (0, 1]. This matches tandem-cuda and is not part of the specification.
+        Box-Muller on pairs of the stream's uniform draws a, b of ``dtype``: with
+        r = sqrt(-2 ln(1 - a)) the pair is (r cos 2 pi b, r sin 2 pi b). Pair j makes
+        elements 2j (cos half) and 2j + 1 (sin half) from uniforms 2j and 2j + 1. An odd
+        ``size`` keeps the cos half of its last pair and still consumes both uniforms. A
+        scalar draw is the cos half and consumes two uniforms, so it equals element 0 of a
+        fill. This matches tandem-c and tandem-cuda and is not part of the specification.
         values agree across ports to about 1e-12 relative for float64 and a few ulps for
         float32, since libm differs. It is not ``numpy.random.Generator.standard_normal``, which
         keeps its own ziggurat over this bit generator.

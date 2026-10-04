@@ -366,7 +366,7 @@ def cross_cases(header, name):
 
 def cross_floats(header, name):
     text = (C_TESTS / header).read_text()
-    body = text.split(name + "[CROSS_NORMAL_COUNT] = {")[1].split("};")[0]
+    body = text.split(name + "[2 * CROSS_NORMAL_COUNT] = {")[1].split("};")[0]
     return np.array([float(x) for x in re.findall(r"[-+]?\d[\d.]*(?:e[-+]?\d+)?", body)])
 
 
@@ -413,28 +413,41 @@ def test_below_edges():
 
 
 def test_normal_matches_tandem_cuda():
+    # The fixtures are pairs, cos half first. A fill is the flattened pairs and a scalar draw
+    # is the cos half, so the scalars equal the even elements.
     want = cross_floats("cross_normal.h", "CROSS_NORMAL")
+    end = cross_position("cross_normal.h", "CROSS_NORMAL_END_POS")
     rng = unaligned()
-    got = np.array([rng.normal() for _ in want])
-    assert np.allclose(got, want, rtol=1e-12, atol=0)
-    assert rng.position == cross_position("cross_normal.h", "CROSS_NORMAL_END_POS")
-    assert np.allclose(unaligned().normal(want.size), want, rtol=1e-12, atol=0)
+    assert np.allclose(rng.normal(want.size), want, rtol=1e-12, atol=0)
+    assert rng.position == end
+    rng = unaligned()
+    got = np.array([rng.normal() for _ in want[::2]])
+    assert np.allclose(got, want[::2], rtol=1e-12, atol=0) and rng.position == end
 
     want = cross_floats("cross_normal.h", "CROSS_NORMALF")
+    end = cross_position("cross_normal.h", "CROSS_NORMALF_END_POS")
+    # Float libm differs between platforms: 8 ulps and a floor near the zeros of cos and sin.
+    close = lambda got: np.all(np.abs(got - want[:len(got)]) <= 8 * 2.0**-23 * np.abs(want[:len(got)]) + 1e-6)
     rng = unaligned()
-    got = np.array([rng.normal(dtype=np.float32) for _ in want])
-    # Float libm differs between platforms: 8 ulps and a floor near the zeros of cos.
-    assert np.all(np.abs(got - want) <= 8 * 2.0**-23 * np.abs(want) + 1e-6)
-    assert rng.position == cross_position("cross_normal.h", "CROSS_NORMALF_END_POS")
+    assert close(rng.normal(want.size, np.float32)) and rng.position == end
+    rng = unaligned()
+    got = np.array([rng.normal(dtype=np.float32) for _ in want[::2]])
+    assert np.all(np.abs(got - want[::2]) <= 8 * 2.0**-23 * np.abs(want[::2]) + 1e-6)
+    assert rng.position == end
 
 
-def test_normal_fill_equals_scalars_and_out():
+def test_normal_fill_pairs_and_out():
     for dtype in (np.float64, np.float32):
         a, b = unaligned(7), unaligned(7)
         got = a.normal(1000, dtype)
         assert got.dtype == dtype
-        assert np.array_equal(got, [b.normal(dtype=dtype) for _ in range(1000)])
+        # Scalar draws are the cos halves, the even elements, two uniforms each.
+        assert np.array_equal(got[::2], [b.normal(dtype=dtype) for _ in range(500)])
         assert a.position == b.position
+        # An odd n drops the last sin half but still consumes both uniforms of its pair.
+        odd, even = unaligned(7), unaligned(7)
+        assert np.array_equal(odd.normal(7, dtype), even.normal(8, dtype)[:7])
+        assert odd.position == even.position
         buf = np.empty(10, dtype)
         assert Tandem(2).normal(out=buf, dtype=dtype) is buf
     z = Tandem(5).normal(200_000)

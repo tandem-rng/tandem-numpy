@@ -63,7 +63,11 @@ generator and give different values.
   and retries a rejected draw on a fallback generator, so it uses exactly one draw per element
   and the position advances by that. Without them it is one scalar draw, which takes as many
   draws as the rejection loop needs. `n = 0` returns 0.
-- `normal` is Box-Muller, `sqrt(-2 ln u) cos(2 pi v)`, from two draws of the dtype's width. Values
+- `normal` is Box-Muller on pairs of uniform draws `a`, `b` of the dtype: with
+  `r = sqrt(-2 ln(1 - a))` the pair is `(r cos 2 pi b, r sin 2 pi b)`. Pair `j` gives elements
+  `2j` (cos half) and `2j + 1` (sin half) from uniforms `2j` and `2j + 1`. An odd `size` keeps
+  the cos half of its last pair and still consumes both uniforms. A scalar draw is the cos half
+  and consumes two uniforms, so it equals element 0 of a fill. Values
   agree with other ports to about `1e-12` relative for `float64` and a few ulps for `float32`,
   because libm differs.
 

@@ -219,3 +219,52 @@ def test_generator_spawn_uses_split():
     assert np.array_equal(kids[1].random(10), Tandem(5).split(1).random(10))
     kid = pickle.loads(pickle.dumps(kids[0].bit_generator))
     assert kid.key == kids[0].bit_generator.key
+
+
+@pytest.mark.parametrize(
+    "dtype, name",
+    [(np.uint32, "k1234_K32_u32.bin"), (np.uint64, "k1234_K32_u64.bin"),
+     (np.float64, "seed42_K32_f64.bin"), (np.float32, "seed42_K32_f32.bin")],
+)
+def test_at_matches_dumps(dtype, name):
+    want = load(name, dtype)
+    rng = make(name)
+    for i in (0, 1, 7, 100, want.size - 1):
+        assert rng.at(dtype, i) == want[i] and rng.at(dtype, i).dtype == dtype
+    assert rng.position == 0
+
+
+@pytest.mark.parametrize("dtype, fill", [(np.uint32, lambda t, n: t.raw(n, np.uint32)),
+                                         (np.uint64, lambda t, n: t.raw(n, np.uint64)),
+                                         (np.float32, lambda t, n: t.random(n, np.float32)),
+                                         (np.float64, lambda t, n: t.random(n))])
+def test_at_from_unaligned_buffered_position(dtype, fill):
+    # An odd 32-bit draw through Generator leaves the buffered generator ahead of the C one.
+    t = Tandem(42)
+    Generator(t).integers(0, 2**32, size=3, dtype=np.uint32)
+    pos = t.position
+    got = [t.at(dtype, i) for i in (0, 5, 1000)]
+    assert t.position == pos
+    ref = Tandem(42)
+    ref.position = pos
+    want = fill(ref, 1001)
+    assert got == [want[0], want[5], want[1000]]
+
+
+def test_position_setter_and_advance_to():
+    ref = Tandem(8).raw(500, np.uint32)
+    rng = Tandem(8)
+    rng.random(10)
+    rng.position = 32 * 100
+    assert np.array_equal(rng.raw(50, np.uint32), ref[100:150])
+    rng.advance_to(32 * 7)
+    assert rng.raw(1, np.uint32)[0] == ref[7]
+    # Buffered Generator draws are discarded by a move.
+    gen = Generator(rng)
+    gen.integers(0, 2**32, size=3, dtype=np.uint32)
+    rng.advance_to(32 * 20)
+    assert gen.integers(0, 2**32, dtype=np.uint32) == ref[20]
+    assert rng.state["position"] == 32 * 21
+    for bad in (-1, 2**63):
+        with pytest.raises(ValueError):
+            rng.advance_to(bad)

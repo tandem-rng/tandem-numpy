@@ -25,6 +25,8 @@ kids = t.fork(4)                       # from the current block, parent moves on
 sub = t.sub(3)                         # by purpose identifier
 streams = Generator(t).spawn(4)        # Generators over t.split(0) .. t.split(3)
 t.key, t.position, t.chunk_length      # transport form
+t.at(np.float64, 10**12)               # random access: element i of the next fill
+t.advance_to(2**40)                    # seek to a bit position, same as t.position = 2**40
 ```
 
 `Tandem(seed, K=32)` accepts an integer seed in `[0, 2**128)`, a `SeedSequence`, or `None`
@@ -38,6 +40,11 @@ which `Generator.spawn` calls, overrides NumPy's `SeedSequence` spawning with th
 specification's split: the first call returns `split(0)` to `split(n - 1)`, and later calls
 continue the numbering. The children have no seed sequence, so their `_seed_seq` is `None`.
 The count of earlier `spawn` calls is not part of `state` or of a pickle.
+
+`at(dtype, i)` returns element `i` of the fill that would start at the current position, for
+`uint32`, `uint64`, `float32`, and `float64`, without moving the generator. `advance_to(p)` and
+the `position` setter move to bit position `p` in `[0, 2**63)`, forward or backward, and discard
+the draws that `Generator` has buffered. `state` reports the new position.
 
 NumPy's `Generator.random()` computes `(next_uint64 >> 11) * 2**-53` and
 `random(dtype=np.float32)` computes `(next_uint32 >> 8) * 2**-24`. Both are the

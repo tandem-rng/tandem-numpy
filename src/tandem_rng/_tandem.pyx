@@ -28,6 +28,11 @@ cdef extern from "tandem.h":
     void tandem_fill_u64(tandem_rng *rng, uint64_t *out, size_t n) nogil
     void tandem_fill_f32(tandem_rng *rng, float *out, size_t n) nogil
     void tandem_fill_f64(tandem_rng *rng, double *out, size_t n) nogil
+    bint tandem_set_position(tandem_rng *rng, uint64_t pos) nogil
+    uint32_t tandem_at_u32(const tandem_rng *rng, uint64_t i) nogil
+    uint64_t tandem_at_u64(const tandem_rng *rng, uint64_t i) nogil
+    float tandem_at_f32(const tandem_rng *rng, uint64_t i) nogil
+    double tandem_at_f64(const tandem_rng *rng, uint64_t i) nogil
     tandem_rng tandem_split(const tandem_rng *rng, uint64_t index) nogil
     tandem_rng tandem_sub(const tandem_rng *rng, uint64_t purpose) nogil
     void tandem_fork(tandem_rng *parent, tandem_rng *children, uint64_t n) nogil
@@ -138,6 +143,38 @@ cdef class Tandem(BitGenerator):
     @property
     def position(self):
         return logical_position(&self.st)
+
+    @position.setter
+    def position(self, value):
+        self.advance_to(value)
+
+    def advance_to(self, position):
+        """Move to a bit position in [0, 2**63), forward or backward."""
+        position = int(position)
+        if not 0 <= position < 2**63:
+            raise ValueError("position must lie in [0, 2**63)")
+        flush(&self.st)
+        tandem_set_position(&self.st.rng, position)
+
+    def at(self, dtype, i):
+        """Element ``i`` of the fill that would start at the current position.
+
+        ``dtype`` is uint32, uint64, float32, or float64. The generator does not move.
+        """
+        cdef uint64_t idx = _check_u64(i)
+        cdef tandem_rng s = self.st.rng
+        dtype = np.dtype(dtype)
+        # The buffered generator runs ahead of the C one, so read from its logical position.
+        tandem_set_position(&s, logical_position(&self.st))
+        if dtype == np.uint32:
+            return np.uint32(tandem_at_u32(&s, idx))
+        if dtype == np.uint64:
+            return np.uint64(tandem_at_u64(&s, idx))
+        if dtype == np.float32:
+            return np.float32(tandem_at_f32(&s, idx))
+        if dtype == np.float64:
+            return np.float64(tandem_at_f64(&s, idx))
+        raise TypeError("dtype must be one of uint32, uint64, float32, float64")
 
     @property
     def chunk_length(self):

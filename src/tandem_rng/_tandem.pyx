@@ -58,6 +58,13 @@ cdef extern from "tandem.h":
     tandem_rng tandem_split(const tandem_rng *rng, uint64_t index) nogil
     tandem_rng tandem_sub(const tandem_rng *rng, uint64_t purpose) nogil
     void tandem_fork(tandem_rng *parent, tandem_rng *children, uint64_t n) nogil
+    ctypedef struct tandem_choice_table:
+        uint64_t capacity
+    bint tandem_choice_build(tandem_choice_table *table, const double *weights, size_t m,
+                             uint64_t *cut, uint32_t *alias) nogil
+    uint32_t tandem_choice(tandem_rng *rng, const tandem_choice_table *table) nogil
+    void tandem_fill_choice(tandem_rng *rng, uint32_t *out, size_t n,
+                            const tandem_choice_table *table) nogil
 
 # NumPy asks the bit generator for one value at a time through these hooks. A buffer of
 # 64-bit words amortises the per-call cost of the generator. The values and their order
@@ -117,6 +124,39 @@ cdef inline void flush(buffered *b) noexcept nogil:
 cdef enum:
     CODE_BOOL, CODE_U8, CODE_U16, CODE_U32, CODE_U64, CODE_F16, CODE_F32, CODE_F64
     CODE_C32, CODE_C64, CODE_U128, CODE_CHAR
+
+
+cdef class ChoiceTable:
+    """Alias table for weighted choice, Appendix C of the specification.
+
+    ``weights`` are m float64 values, 1 <= m < 2**32, finite, not negative and not all
+    zero, in any scale. Other dtypes convert to float64 first. Index i has probability
+    w[i] / sum(w), rounded to the table's integer masses. The build draws nothing, and the
+    table serves any number of draws. ``capacity``, ``cut`` and ``alias`` are the table's
+    S, cut and alias, the same in every Tandem port.
+    """
+
+    cdef tandem_choice_table t
+    # Read-only, since t points into their buffers.
+    cdef readonly np.ndarray cut, alias
+
+    def __init__(self, weights):
+        cdef np.ndarray w = np.ascontiguousarray(weights, dtype=np.float64)
+        if w.ndim != 1:
+            raise ValueError("weights must be one-dimensional")
+        self.cut = np.empty(w.size, np.uint64)
+        self.alias = np.empty(w.size, np.uint32)
+        if not tandem_choice_build(&self.t, <double *>np.PyArray_DATA(w), w.size,
+                                   <uint64_t *>np.PyArray_DATA(self.cut),
+                                   <uint32_t *>np.PyArray_DATA(self.alias)):
+            raise ValueError("weights must be finite and non-negative, not all zero, "
+                             "and number from 1 to 2**32 - 1")
+        self.cut.setflags(write=False)
+        self.alias.setflags(write=False)
+
+    @property
+    def capacity(self):
+        return self.t.capacity
 
 
 cdef class Tandem(BitGenerator):
@@ -440,6 +480,23 @@ cdef class Tandem(BitGenerator):
             with nogil:
                 tandem_fill_exponential_f32(&self.st.rng, <float *>p, n)
         return a[()] if size is None and out is None else a
+
+    def choice(self, ChoiceTable table not None, size=None, out=None):
+        """Indices in [0, m) with the probabilities of ``table``, by Appendix C of the spec.
+
+        Element i comes from 64-bit draw i, so a fill equals the scalar draws and a fill cut
+        anywhere equals the whole fill. An empty fill aligns the position to 64. The indices
+        are uint32. ``out`` is a C-contiguous one-dimensional uint32 array, filled in place.
+        """
+        flush(&self.st)
+        if size is None and out is None:
+            return np.uint32(tandem_choice(&self.st.rng, &table.t))
+        cdef np.ndarray a = _buffer(size, np.uint32, out, (np.uint32,))
+        cdef uint32_t *p = <uint32_t *>np.PyArray_DATA(a)
+        cdef size_t n = a.size
+        with nogil:
+            tandem_fill_choice(&self.st.rng, p, n, &table.t)
+        return a
 
     cdef void _fill(self, np.ndarray a, int code, size_t n):
         cdef void *p = np.PyArray_DATA(a)

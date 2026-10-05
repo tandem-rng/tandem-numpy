@@ -42,6 +42,9 @@ t.advance_to(2**40)                    # seek to a bit position, same as t.posit
 - `below(n, size, dtype)`: bounded integers on `[0, n)`, one draw per element.
 - `normal`, `exponential`: normals (ziggurat for `float64`, Box-Muller for `float32`) and
   `-ln(1 - u)` exponentials, `float64` or `float32`.
+- `ChoiceTable(weights)`, `choice(table, size)`: weighted indices on `[0, m)` by the alias
+  table of Appendix C, one 64-bit draw each, `uint32`. Build the table once and reuse it.
+  `TandemGenerator.choice(a, size, p=...)` takes `p` as an array or a `ChoiceTable`.
 - `split`, `fork`, `sub`, `spawn`: child streams. `Generator.spawn` uses `split(0)`, `split(1)`, ...
 - `at(dtype, i)`, `advance_to(p)`, `position`, `key`, `chunk_length`, `state`: random access
   and transport. Pickling goes through `state`.

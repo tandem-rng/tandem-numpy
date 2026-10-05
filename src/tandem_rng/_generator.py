@@ -5,7 +5,7 @@ import operator
 import numpy as np
 from numpy.random import Generator
 
-from ._tandem import Tandem
+from ._tandem import ChoiceTable, Tandem
 
 _UNSIGNED = {32: np.uint32, 64: np.uint64}
 
@@ -23,8 +23,11 @@ class TandemGenerator(Generator):
     the speed of the C fills. ``standard_exponential`` and ``exponential`` return Tandem's
     inversion values, ``-ln(1 - u)`` with the same bits in every Tandem port, for float64 and
     float32, whatever ``method`` says. They are not NumPy's ziggurat and Lemire values:
-    ``Generator(Tandem(seed))`` keeps NumPy's algorithms over the same stream. Every other
-    method falls through to NumPy and reads the bit generator one value at a time.
+    ``Generator(Tandem(seed))`` keeps NumPy's algorithms over the same stream. ``choice`` with
+    ``p`` and ``replace=True`` draws by the alias table of Appendix C, one 64-bit draw per
+    element, and not by NumPy's inversion of the cumulative sum. ``p`` may be a
+    ``ChoiceTable``, built once from weights in any scale and reused. Every other method
+    falls through to NumPy and reads the bit generator one value at a time.
 
     The overridden methods move the shared bit generator exactly as the matching
     ``Tandem`` fills do. ``integers`` draws 32-bit words when the range is at most 2**32 and
@@ -89,6 +92,32 @@ class TandemGenerator(Generator):
         e = self.standard_exponential(shape if shape != () else None)
         r = scale * e
         return r[()] if size is None and np.ndim(r) == 0 else r
+
+    def choice(self, a, size=None, replace=True, p=None, axis=0, shuffle=True):
+        if isinstance(p, ChoiceTable):
+            if not replace:
+                raise ValueError("a ChoiceTable samples with replacement")
+            table = p
+            pop = operator.index(a) if np.ndim(a) == 0 else np.shape(a)[axis]
+            if pop != table.cut.size:
+                raise ValueError("a and p must have same size")
+        elif p is None or not replace or np.size(p) == 0:
+            return super().choice(a, size, replace, p, axis, shuffle)
+        else:
+            # NumPy checks a, p and axis and draws nothing at size 0.
+            super().choice(a, 0, replace, p, axis, shuffle)
+            table = ChoiceTable(p)
+        r = self.bit_generator.choice(table, size)
+        idx = int(r) if size is None else r.astype(np.int64)
+        if np.ndim(a) == 0:
+            return idx
+        a = np.asarray(a)
+        if size is not None and idx.ndim == 0 and a.ndim == 1:
+            # size=() asks for a 0-d array, as in NumPy.
+            res = np.empty((), a.dtype)
+            res[()] = a[idx]
+            return res
+        return a.take(idx, axis=axis)
 
     def integers(self, low, high=None, size=None, dtype=np.int64, endpoint=False):
         if np.ndim(low) or np.ndim(high):

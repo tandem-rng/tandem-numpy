@@ -800,3 +800,119 @@ def test_integers_bool_and_array_bounds():
     # Array bounds are NumPy's own algorithm.
     arr = TandemGenerator(9).integers([0, 10], [5, 20])
     assert arr.shape == (2,) and (arr >= [0, 10]).all() and (arr < [5, 20]).all()
+
+
+# Weighted choice, Appendix C of the specification.
+
+from tandem_rng import ChoiceTable
+
+
+def cross_choice():
+    """(weights, m, capacity, start, want, end_pos) per row of tandem-c's cross_choice.h."""
+    text = (C_TESTS / "cross_choice.h").read_text()
+    weights = {
+        name: np.array(re.findall(FLOAT, body), np.float64)
+        for name, body in re.findall(r"(CROSS_CHOICE_W\d+)\[\d+\] = \{([^}]*)\}", text)
+    }
+    body = text.split("} CROSS_CHOICE[] = {")[1].split("\n};")[0]
+    return [
+        (weights[w], int(m), int(cap, 16), int(start), [int(x) for x in re.findall(r"(\d+)u", want)], int(end))
+        for w, m, cap, start, want, end in re.findall(
+            r"\{(CROSS_CHOICE_W\d+), (\d+), 0x([0-9a-f]+)ull, (\d+)ull,\s*\{([^}]*)\},\s*(\d+)u\}", body
+        )
+    ]
+
+
+def test_choice_spec_vectors():
+    # The table and the indices of the 16 UInt64 draws from position 0, by fill and by scalar.
+    key = words(VECTORS["key"])
+    for case in VECTORS["choice"]["cases"]:
+        t = ChoiceTable(case["weights"])
+        assert t.capacity == int(case["S"], 16)
+        assert t.cut.tolist() == [int(c, 16) for c in case["cut"]]
+        assert t.alias.tolist() == case["alias"]
+        assert Tandem.from_key(key).choice(t, 16).tolist() == case["indices"]
+        rng = Tandem.from_key(key)
+        assert [rng.choice(t) for _ in range(16)] == case["indices"]
+    for bad in ([], [0.0, -0.0], [1.0, -1.0], [1.0, np.nan], [np.inf], [[1.0, 2.0]]):
+        with pytest.raises(ValueError):
+            ChoiceTable(bad)
+
+
+def test_choice_matches_tandem_c_fixtures():
+    # One table per weight set serves every start: fill, scalar draws and TandemGenerator.
+    cases = cross_choice()
+    assert len(cases) == 18
+    tables = {}
+    for w, m, cap, start, want, end in cases:
+        t = tables.setdefault(w.tobytes(), ChoiceTable(w))
+        assert t.cut.size == m and t.capacity == cap
+        rng = at_position(start)
+        got = rng.choice(t, len(want))
+        assert got.dtype == np.uint32 and got.tolist() == want and rng.position == end
+        rng = at_position(start)
+        assert [rng.choice(t) for _ in want] == want and rng.position == end
+        buf = np.empty(len(want), np.uint32)
+        assert at_position(start).choice(t, out=buf) is buf and buf.tolist() == want
+        g = TandemGenerator(Tandem(42))
+        g.bit_generator.position = start
+        assert g.choice(m, len(want), p=t).tolist() == want and g.bit_generator.position == end
+
+
+def test_choice_fill_cut_equals_whole_and_empty_aligns():
+    t = ChoiceTable(np.arange(100.0))
+    cuts = (1, 511, 2, 600, 7)
+    whole = unaligned(3)
+    want = whole.choice(t, sum(cuts))
+    rng = unaligned(3)
+    assert np.array_equal(np.concatenate([rng.choice(t, c) for c in cuts]), want)
+    assert rng.position == whole.position
+    rng = unaligned(3)
+    assert rng.choice(t, 0).size == 0 and rng.position == 64
+
+
+def test_choice_follows_the_weights():
+    # Pearson chi-square on 10^6 draws against p[i] = w[i] / sum(w), 98 degrees of freedom,
+    # below the 0.1% critical value by the Wilson-Hilferty approximation. The zero weight
+    # never appears.
+    w = np.arange(100.0)
+    n, df = 1_000_000, 98
+    counts = np.bincount(TandemGenerator(17).choice(100, n, p=w / w.sum()), minlength=100)
+    assert counts[0] == 0
+    expected = n * w[1:] / w.sum()
+    chi2 = np.sum((counts[1:] - expected) ** 2 / expected)
+    assert chi2 < df * (1 - 2 / (9 * df) + 3.09 * math.sqrt(2 / (9 * df))) ** 3
+
+
+@pytest.mark.parametrize("args, kwargs", [
+    ((5,), {}), ((5,), {"size": 3}), ((np.arange(5.0),), {}), ((["a", "b", "c", "d", "e"],), {"size": 4}),
+    ((np.arange(10).reshape(5, 2),), {}), ((np.arange(10).reshape(5, 2),), {"size": 3}),
+    ((np.arange(10).reshape(2, 5),), {"size": (2, 3), "axis": 1}), ((np.arange(5),), {"size": ()}),
+    ((5,), {"size": ()}), ((5,), {"size": 0}), ((5,), {"replace": False, "size": 2}),
+    ((4,), {}), ((5,), {"p": [0.3] * 5}), ((5,), {"p": [-0.2, 0.4, 0.2, 0.3, 0.3]}),
+    ((5,), {"p": [[0.2] * 5]}), ((0,), {"p": []}),
+])
+def test_choice_handles_arguments_as_numpy(args, kwargs):
+    # Result type, dtype and shape, or the exception, equal those of numpy.random.Generator.
+    kwargs = {"p": [0.1, 0.2, 0.3, 0.2, 0.2], **kwargs}
+    def outcome(gen):
+        try:
+            r = gen.choice(*args, **kwargs)
+        except (TypeError, ValueError) as e:
+            return type(e), str(e)
+        return type(r), getattr(r, "dtype", None), np.shape(r)
+    assert outcome(TandemGenerator(1)) == outcome(np.random.default_rng(1))
+
+
+def test_generator_choice_is_the_table_draw():
+    # p is used as given, so the indices are those of ChoiceTable(p), mapped onto a.
+    p = np.array([0.1, 0.2, 0.3, 0.4])
+    g, ref = pair(9, 70)
+    t = ChoiceTable(p)
+    want = ref.choice(t, 200)
+    a = np.arange(8).reshape(2, 4)
+    assert np.array_equal(g.choice(a, 200, p=p, axis=1), a[:, want])
+    assert g.choice(4, p=t) == ref.choice(t)
+    assert g.bit_generator.position == ref.position
+    with pytest.raises(ValueError):
+        g.choice(5, 3, p=t)

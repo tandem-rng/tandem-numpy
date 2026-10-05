@@ -11,7 +11,7 @@ pseudorandom number generator. It wraps tandem-c and produces the specified stre
 Normals are bit exact with tandem-c.
 
 Needs Python 3.11, NumPy 2.0, a C compiler, and meson-python. The `external/tandem-c` submodule
-is pinned at tandem-c `121db59`.
+is pinned at tandem-c `eba98f2`.
 
 ```sh
 git clone --recurse-submodules https://github.com/tandem-rng/tandem-numpy
@@ -20,13 +20,14 @@ pip install ./tandem-numpy
 
 ```python
 from numpy.random import Generator
-from tandem_rng import Tandem, TandemGenerator
+from tandem_rng import ChoiceTable, Tandem, TandemGenerator
 
 t = Tandem(42)
 u = t.random(2**20)                    # the stream's Float64 draws, fast fill
 worker = t.split(7)                    # by index, from the key alone
 g = TandemGenerator(42)                # NumPy Generator with Tandem's own samplers, fast
 z = g.standard_normal(10**6)           # ziggurat, bit identical to tandem-c
+i = g.choice(3, 10**6, p=ChoiceTable([1, 2, 7]))   # weighted indices, same in every port
 rng = Generator(Tandem(42))            # any NumPy distribution over the same stream
 ```
 

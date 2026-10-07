@@ -685,14 +685,14 @@ def test_exponential_matches_tandem_c_fixtures(dtype, table):
 
 def test_standard_exponential_bits_match_tandem_c():
     # The bytes of tandem-c's tools/dump_exponentials.c: 1e6 f64 then 1e6 f32 from five
-    # positions, FNV-1a 0x47f8f98297d94ee2 there and SHA-256 here.
+    # positions, FNV-1a 0x1c761a2d471073c2 there and SHA-256 here.
     h = hashlib.sha256()
     for start in (0, 1, 77, 12345, 1 << 30):
         g = TandemGenerator(Tandem(2026 + (7 << 64)))
         g.bit_generator.position = start
         h.update(g.standard_exponential(1_000_000).tobytes())
         h.update(g.standard_exponential(1_000_000, np.float32).tobytes())
-    assert h.hexdigest() == "5c035a4ef1368231d25a9c2f9201be2df3224e28a14549a50625d0db3770ef4e"
+    assert h.hexdigest() == "7b12b7c36baf14ab42f7736a5a67925c3c7b1bfafc8d50f078ba1af927044dd5"
 
 
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])

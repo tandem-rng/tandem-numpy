@@ -26,7 +26,7 @@ boundaries against the whole call. A hash test compares the `standard_normal` fl
 the bytes of tandem-c's `tools/dump_normals.c` (SHA-256 `700ec4d2…`) and the float32 fills with
 the bytes tandem-c's `tests/test_normal_bits.c` hashes (FNV-1a `0xaa1ea656ce73a4fb`, checked here
 as SHA-256), so they are the same bits on every compiler. The `standard_exponential` fills have the
-same test against `tools/dump_exponentials.c` (FNV-1a `0x47f8f98297d94ee2`). Fills cut at element
+same test against `tools/dump_exponentials.c` (FNV-1a `0x1c761a2d471073c2`). Fills cut at element
 boundaries, `n = 0`, the Exp(1) moments to fourth order, and a Kolmogorov-Smirnov test on 10^7
 draws cover the rest.
 

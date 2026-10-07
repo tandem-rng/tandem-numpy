@@ -11,7 +11,7 @@ pseudorandom number generator. It wraps tandem-c and produces the specified stre
 Normals are bit exact with tandem-c.
 
 Needs Python 3.11, NumPy 2.0, a C compiler, and meson-python. The `external/tandem-c` submodule
-is pinned at tandem-c `ef67bd7`.
+is pinned at tandem-c `1c75956`.
 
 ```sh
 git clone --recurse-submodules https://github.com/tandem-rng/tandem-numpy

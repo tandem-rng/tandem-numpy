@@ -10,13 +10,14 @@ NumPy `BitGenerator` for [Tandem8x32](https://github.com/tandem-rng/spec), a non
 pseudorandom number generator. It wraps tandem-c and produces the specified stream bit for bit.
 Normals are bit exact with tandem-c.
 
-Needs Python 3.11, NumPy 2.0, a C compiler, and meson-python. The `external/tandem-c` submodule
-is pinned at tandem-c `1c75956`.
+## Install
 
 ```sh
 git clone --recurse-submodules https://github.com/tandem-rng/tandem-numpy
 pip install ./tandem-numpy
 ```
+
+## Quick start
 
 ```python
 from numpy.random import Generator
@@ -31,8 +32,15 @@ i = g.choice(3, 10**6, p=ChoiceTable([1, 2, 7]))   # weighted indices, same in e
 rng = Generator(Tandem(42))            # any NumPy distribution over the same stream
 ```
 
+## Requirements
+
+Needs Python 3.11, NumPy 2.0, a C compiler, and meson-python. The `external/tandem-c` submodule
+is pinned at tandem-c `1c75956`.
+
+## Documentation
+
 See [API](docs/api.md), [design](docs/design.md), [tests](docs/tests.md) and [speed](docs/speed.md).
 
 Portions of the code were generated with the assistance of LLMs.
 
-[Documentation](https://tandem-rng.github.io/tandem-numpy/) · [Apache 2.0 license](LICENSE)
+[Docs](https://tandem-rng.github.io/tandem-numpy/) · [Specification](https://github.com/tandem-rng/spec/blob/main/SPEC.md) · [Website](https://tandem-rng.github.io/) · [Issues](https://github.com/tandem-rng/tandem-numpy/issues) · [License](LICENSE)

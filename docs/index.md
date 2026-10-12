@@ -6,7 +6,7 @@ NumPy `BitGenerator` for Tandem8x32. It wraps tandem-c and produces the stream o
 - [API](api.md): `Tandem`, `TandemGenerator` and parallel use.
 - [Design](design.md): the bounded integer, normal and exponential contracts.
 - [Tests](tests.md): what the suite checks.
-- [Speed](speed.md): fill and `Generator` figures on the Apple M4.
+- [Performance](speed.md): fill and `Generator` figures on the Apple M4.
 
 ## Install
 

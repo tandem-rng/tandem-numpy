@@ -111,12 +111,20 @@ cdef double next_f64(void *st) noexcept nogil:
 cdef inline uint64_t logical_position(buffered *b) noexcept nogil:
     return tandem_position(&b.rng) - 64 * b.left - (32 if b.has_pending else 0)
 
+cdef inline void restore_position(tandem_rng *rng, uint64_t position) noexcept nogil:
+    # The checked seek accepts initial positions only; buffered draws can have a valid
+    # unsigned successor above that bound. Rebuild its transport form in that case.
+    cdef uint32_t key[4]
+    if not tandem_set_position(rng, position):
+        tandem_key(rng, key)
+        rng[0] = tandem_from_key(key, position, tandem_chunk_length(rng))
+
 cdef inline void flush(buffered *b) noexcept nogil:
     # Put the C generator at the position the buffered draws have reached. Setting the
     # position drops the C row cache, so skip it when nothing is buffered.
     if b.left == 0 and not b.has_pending:
         return
-    tandem_set_position(&b.rng, logical_position(b))
+    restore_position(&b.rng, logical_position(b))
     b.left = 0
     b.has_pending = False
 
@@ -194,6 +202,9 @@ cdef class Tandem(BitGenerator):
     @classmethod
     def from_key(cls, key, position=0, K=32):
         """Generator with the given four 32-bit key words at a bit position."""
+        position = int(position)
+        if not 0 <= position < 2**63:
+            raise ValueError("position must lie in [0, 2**63)")
         rng = cls(0, K)
         rng.state = {"bit_generator": "Tandem", "key": list(key), "position": position, "K": K}
         return rng
@@ -245,7 +256,7 @@ cdef class Tandem(BitGenerator):
         with self.lock:
             s = self.st.rng
             position = logical_position(&self.st)
-        tandem_set_position(&s, position)
+        restore_position(&s, position)
         if dtype == np.uint32:
             return np.uint32(tandem_at_u32(&s, idx))
         if dtype == np.uint64:
@@ -284,8 +295,8 @@ cdef class Tandem(BitGenerator):
         for i in range(4):
             k[i] = _check_u32(key[i])
         pos = int(value["position"])
-        if not 0 <= pos < 2**63:
-            raise ValueError("position must lie in [0, 2**63)")
+        if not 0 <= pos < 2**64:
+            raise ValueError("state position must lie in [0, 2**64)")
         cdef tandem_rng restored = tandem_from_key(k, pos, _check_K(value["K"]))
         with self.lock:
             self.st.rng = restored

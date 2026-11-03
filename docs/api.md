@@ -106,9 +106,16 @@ the draws that `Generator` has buffered. `state` reports the new position.
 NumPy's `Generator.random()` computes `(next_uint64 >> 11) * 2**-53` and
 `random(dtype=np.float32)` computes `(next_uint32 >> 8) * 2**-24`. Both are the
 specification's own mappings, so `Generator(Tandem(42)).random(n)` equals `Tandem(42).random(n)`. The `state` property is a dict of
-`key`, `position`, and `K`, and pickling goes through it.
+`key`, `position`, and `K`, and pickling goes through it. State restoration and pickling
+preserve unsigned successor positions in `[0, 2**64)`, including those reached by a draw
+past `2**63`; `from_key` and explicit seeks retain the initial-position bound `[0, 2**63)`.
+Direct fills raise `OverflowError` before changing state or output when the whole fill's
+aligned successor would exceed `2**64 - 1`.
 
 ## Parallel use
+
+Direct fills and state operations use the same `BitGenerator.lock` as NumPy's samplers.
+Independent generators have separate locks.
 
 Element `i` of a fill is draw `i`, so ranks, threads or devices that start at the
 position of their first element, or draw from `split(task)`, reproduce a serial run for any

@@ -5,7 +5,9 @@ import json
 import math
 import re
 import pickle
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import numpy as np
 import pytest
@@ -199,6 +201,156 @@ def test_generator_draws_match_spec_alignment():
 
 def ref_u64(words, i):
     return int(words[i]) | int(words[i + 1]) << 32
+
+
+def test_buffered_unsigned_successor_continuation_and_restore():
+    start = 2**63 - 1
+    reference = Tandem.from_key((1, 2, 3, 4), start)
+    want = reference.raw(8)
+    rng = Tandem.from_key((1, 2, 3, 4), start)
+    numpy = Generator(rng)
+    assert numpy.bit_generator.random_raw() == want[0]
+    assert rng.at(np.uint64, 0) == want[1]
+    assert rng.raw() == want[1]
+    assert numpy.bit_generator.random_raw() == want[2]
+    state = rng.state
+    assert state["position"] == 2**63 + 192
+    with pytest.raises(ValueError):
+        Tandem.from_key(rng.key, 2**63)
+    with pytest.raises(ValueError):
+        rng.advance_to(2**63)
+    with pytest.raises(ValueError):
+        rng.state = {**state, "position": 2**64}
+    assert rng.state == state
+    restored = Tandem(0)
+    restored.state = state
+    copies = (rng, restored, pickle.loads(pickle.dumps(rng)))
+    for copy in copies:
+        assert np.array_equal(copy.raw(5), want[3:])
+        assert copy.position == reference.position
+    # A pending high half must also survive the rewind used by at() and direct fills.
+    rng = Tandem.from_key((1, 2, 3, 4), start)
+    numpy = Generator(rng)
+    words = Tandem.from_key(rng.key, start).raw(8, np.uint32)
+    assert np.array_equal(numpy.integers(0, 2**32, 3, np.uint32), words[:3])
+    assert rng.at(np.uint32, 0) == words[3]
+    assert rng.raw(dtype=np.uint32) == words[3]
+    assert rng.position == 2**63 + 128
+
+
+def tail_rng(position):
+    rng = Tandem(42)
+    rng.state = {**rng.state, "position": position}
+    return rng
+
+
+def test_numpy_callbacks_draw_valid_tail_without_full_prefetch():
+    start = 2**64 - 256
+    want = tail_rng(start).raw(3)
+    rng = tail_rng(start)
+    gen = Generator(rng)
+    assert gen.bit_generator.random_raw() == want[0]
+    assert rng.at(np.uint64, 0) == want[1]
+    assert rng.raw() == want[1]
+    assert gen.bit_generator.random_raw() == want[2]
+    assert rng.position == 2**64 - 64
+    state = rng.state
+    with pytest.raises(OverflowError):
+        rng.raw()
+    assert rng.state == state
+
+    rng = tail_rng(start)
+    words = tail_rng(start).raw(4, np.uint32)
+    gen = Generator(rng)
+    assert np.array_equal(gen.integers(0, 2**32, 3, np.uint32), words[:3])
+    assert rng.at(np.uint32, 0) == words[3]
+    assert rng.raw(dtype=np.uint32) == words[3]
+    assert rng.position == start + 128
+
+
+@pytest.mark.parametrize("draw, dtype", [
+    (lambda t, out: t.raw(out=out), np.uint64),
+    (lambda t, out: t.random(out=out), np.float64),
+    (lambda t, out: t.fill(out), np.complex64),
+    (lambda t, out: t.char(out=out), np.uint32),
+    (lambda t, out: t.below(7, out=out), np.uint64),
+    (lambda t, out: t.normal(out=out), np.float64),
+    (lambda t, out: t.normal(dtype=np.float32, out=out), np.float32),
+    (lambda t, out: t.exponential(out=out), np.float64),
+    (lambda t, out: t.choice(ChoiceTable([1, 2]), out=out), np.uint32),
+])
+def test_direct_tail_fill_rejects_whole_span_before_writing(draw, dtype):
+    rng = tail_rng(2**64 - 128)
+    out = np.full(3, 17, dtype=dtype)
+    state = rng.state
+    with pytest.raises(OverflowError):
+        draw(rng, out)
+    assert (out == 17).all() and rng.state == state
+    assert rng.raw() == tail_rng(state["position"]).raw()
+
+
+def test_tail_u128_and_float32_normal_pair_span():
+    rng = tail_rng(2**64 - 128)
+    out = np.full((1, 2), 17, np.uint64)
+    with pytest.raises(OverflowError):
+        rng.u128(out=out)
+    assert (out == 17).all() and rng.position == 2**64 - 128
+    # One Float32 normal consumes two uniforms, even when only its cos half is returned.
+    rng = tail_rng(2**64 - 64)
+    with pytest.raises(OverflowError):
+        rng.normal(dtype=np.float32)
+    assert rng.position == 2**64 - 64
+
+
+def test_tail_empty_fill_alignment_and_no_alignment_paths():
+    rng = tail_rng(2**64 - 1)
+    for empty in (lambda: rng.raw(0), lambda: rng.random(0), lambda: rng.normal(0)):
+        with pytest.raises(OverflowError):
+            empty()
+        assert rng.position == 2**64 - 1
+    assert rng.below(7, 0).size == 0
+    assert rng.normal(0, np.float32).size == 0
+    assert rng.exponential(0).size == 0
+    assert rng.position == 2**64 - 1
+
+
+def test_empty_char_aligns_to_consumed_width():
+    rng = Tandem(42)
+    rng.position = 1
+    assert rng.char(0).size == 0 and rng.position == 64
+
+
+@pytest.mark.parametrize("operation", [
+    lambda t: t.random(2), lambda t: t.raw(2), lambda t: t.normal(2),
+    lambda t: t.exponential(2), lambda t: t.fill(np.empty(2)),
+    lambda t: t.u128(2), lambda t: t.char(2), lambda t: t.below(7),
+    lambda t: t.below(7, 2), lambda t: t.choice(ChoiceTable([1, 2])),
+    lambda t: t.choice(ChoiceTable([1, 2]), 2), lambda t: t.fork(2),
+    lambda t: t.advance_to(7), lambda t: setattr(t, "state", Tandem(5).state),
+    lambda t: t.at(np.uint64, 0), lambda t: t.state, lambda t: t.spawn(2),
+])
+def test_shared_bitgenerator_lock_excludes_direct_operations(operation):
+    rng = Tandem(9)
+    # Prefill NumPy's buffer so every operation also encounters shared buffered state.
+    Generator(rng).random()
+    started, finished = Event(), Event()
+
+    def run():
+        started.set()
+        try:
+            return operation(rng)
+        finally:
+            finished.set()
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        with rng.lock:
+            future = workers.submit(run)
+            assert started.wait(2)
+            assert not finished.wait(0.05)
+            # A separate generator has its own lock and can still draw.
+            independent = workers.submit(lambda: Tandem(10).raw())
+            assert independent.result(timeout=2) == Tandem(10).raw()
+        future.result(timeout=2)
 
 
 def test_spawn_is_split_by_index():
@@ -559,6 +711,33 @@ def test_generator_derived_samplers():
     assert isinstance(g.normal(), float) and isinstance(g.uniform(), float)
     with pytest.raises(ValueError):
         g.normal(0, -1)
+
+
+@pytest.mark.parametrize("sampler, parameters", [
+    ("uniform", {"low": [0, 1]}), ("normal", {"loc": [0, 1]}),
+    ("exponential", {"scale": [1, 2]}),
+])
+def test_explicit_size_broadcasts_parameters_before_drawing(sampler, parameters):
+    g, ref = pair(3, 77)
+    for size in ((1,), ()):
+        with pytest.raises(ValueError):
+            getattr(g, sampler)(size=size, **parameters)
+        assert g.bit_generator.state == ref.state
+    got = getattr(g, sampler)(size=(3, 2), **parameters)
+    expected = getattr(TandemGenerator(ref), sampler)(size=(3, 2), **parameters)
+    assert got.shape == (3, 2) and np.array_equal(got, expected)
+    assert g.bit_generator.state == ref.state
+
+
+@pytest.mark.parametrize("sampler", ["random", "standard_normal", "standard_exponential"])
+def test_readonly_out_rejected_before_drawing(sampler):
+    g, ref = pair(3, 77)
+    out = np.empty(6)[::2]
+    out.setflags(write=False)
+    with pytest.raises(ValueError):
+        getattr(g, sampler)(out=out)
+    assert g.bit_generator.state == ref.state
+    assert np.array_equal(g.random(4), ref.random(4))
 
 
 @pytest.mark.parametrize("dtype, width", [(np.int8, 32), (np.uint16, 32), (np.int32, 32), (np.uint32, 32),

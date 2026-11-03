@@ -631,6 +631,22 @@ def test_generator_derived_samplers():
         g.normal(0, -1)
 
 
+@pytest.mark.parametrize("sampler, parameters", [
+    ("uniform", {"low": [0, 1]}), ("normal", {"loc": [0, 1]}),
+    ("exponential", {"scale": [1, 2]}),
+])
+def test_explicit_size_broadcasts_parameters_before_drawing(sampler, parameters):
+    g, ref = pair(3, 77)
+    for size in ((1,), ()):
+        with pytest.raises(ValueError):
+            getattr(g, sampler)(size=size, **parameters)
+        assert g.bit_generator.state == ref.state
+    got = getattr(g, sampler)(size=(3, 2), **parameters)
+    expected = getattr(TandemGenerator(ref), sampler)(size=(3, 2), **parameters)
+    assert got.shape == (3, 2) and np.array_equal(got, expected)
+    assert g.bit_generator.state == ref.state
+
+
 @pytest.mark.parametrize("dtype, width", [(np.int8, 32), (np.uint16, 32), (np.int32, 32), (np.uint32, 32),
                                           (np.int64, 64), (np.uint64, 64)])
 def test_integers_are_below_plus_low(dtype, width):

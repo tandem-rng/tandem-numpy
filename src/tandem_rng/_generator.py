@@ -14,6 +14,19 @@ def _shape(size):
     return (operator.index(size),) if np.ndim(size) == 0 else tuple(size)
 
 
+def _sample_shape(size, *parameters):
+    if size is None:
+        return np.broadcast(*parameters).shape
+    # Broadcasting may expand parameters to the requested shape, but never the output.
+    shape = None
+    for parameter in parameters:
+        if parameter.ndim:
+            if shape is None:
+                shape = _shape(size)
+            np.broadcast_to(parameter, shape)
+    return size
+
+
 class TandemGenerator(Generator):
     """NumPy ``Generator`` that draws through Tandem's C fills.
 
@@ -70,7 +83,7 @@ class TandemGenerator(Generator):
 
     def uniform(self, low=0.0, high=1.0, size=None):
         low, high = np.asarray(low, np.float64), np.asarray(high, np.float64)
-        shape = np.broadcast(low, high).shape if size is None else size
+        shape = _sample_shape(size, low, high)
         u = self.random(shape if shape != () else None)
         r = low + (high - low) * u
         return r[()] if size is None and np.ndim(r) == 0 else r
@@ -79,7 +92,7 @@ class TandemGenerator(Generator):
         loc, scale = np.asarray(loc, np.float64), np.asarray(scale, np.float64)
         if (scale < 0).any():
             raise ValueError("scale < 0")
-        shape = np.broadcast(loc, scale).shape if size is None else size
+        shape = _sample_shape(size, loc, scale)
         z = self.standard_normal(shape if shape != () else None)
         r = loc + scale * z
         return r[()] if size is None and np.ndim(r) == 0 else r
@@ -88,7 +101,7 @@ class TandemGenerator(Generator):
         scale = np.asarray(scale, np.float64)
         if (scale < 0).any():
             raise ValueError("scale < 0")
-        shape = scale.shape if size is None else size
+        shape = _sample_shape(size, scale)
         e = self.standard_exponential(shape if shape != () else None)
         r = scale * e
         return r[()] if size is None and np.ndim(r) == 0 else r

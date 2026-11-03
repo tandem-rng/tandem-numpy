@@ -647,6 +647,17 @@ def test_explicit_size_broadcasts_parameters_before_drawing(sampler, parameters)
     assert g.bit_generator.state == ref.state
 
 
+@pytest.mark.parametrize("sampler", ["random", "standard_normal", "standard_exponential"])
+def test_readonly_out_rejected_before_drawing(sampler):
+    g, ref = pair(3, 77)
+    out = np.empty(6)[::2]
+    out.setflags(write=False)
+    with pytest.raises(ValueError):
+        getattr(g, sampler)(out=out)
+    assert g.bit_generator.state == ref.state
+    assert np.array_equal(g.random(4), ref.random(4))
+
+
 @pytest.mark.parametrize("dtype, width", [(np.int8, 32), (np.uint16, 32), (np.int32, 32), (np.uint32, 32),
                                           (np.int64, 64), (np.uint64, 64)])
 def test_integers_are_below_plus_low(dtype, width):

@@ -64,7 +64,9 @@ class TandemGenerator(Generator):
             raise TypeError("out must be an ndarray of the requested dtype")
         if size is not None and out.shape != _shape(size):
             raise ValueError("size does not match the shape of out")
-        if out.flags.c_contiguous and out.flags.writeable and out.dtype.isnative:
+        if not out.flags.writeable:
+            raise ValueError("out must be writeable")
+        if out.flags.c_contiguous and out.dtype.isnative:
             draw(None, dtype, out.reshape(-1))
         else:
             out[...] = draw(out.size, dtype, None).reshape(out.shape)

@@ -110,6 +110,9 @@ specification's own mappings, so `Generator(Tandem(42)).random(n)` equals `Tande
 
 ## Parallel use
 
+Direct fills and state operations use the same `BitGenerator.lock` as NumPy's samplers.
+Independent generators have separate locks.
+
 Element `i` of a fill is draw `i`, so ranks, threads or devices that start at the
 position of their first element, or draw from `split(task)`, reproduce a serial run for any
 decomposition, as

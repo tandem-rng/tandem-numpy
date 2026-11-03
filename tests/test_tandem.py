@@ -5,7 +5,9 @@ import json
 import math
 import re
 import pickle
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import numpy as np
 import pytest
@@ -199,6 +201,39 @@ def test_generator_draws_match_spec_alignment():
 
 def ref_u64(words, i):
     return int(words[i]) | int(words[i + 1]) << 32
+
+
+@pytest.mark.parametrize("operation", [
+    lambda t: t.random(2), lambda t: t.raw(2), lambda t: t.normal(2),
+    lambda t: t.exponential(2), lambda t: t.fill(np.empty(2)),
+    lambda t: t.u128(2), lambda t: t.char(2), lambda t: t.below(7),
+    lambda t: t.below(7, 2), lambda t: t.choice(ChoiceTable([1, 2])),
+    lambda t: t.choice(ChoiceTable([1, 2]), 2), lambda t: t.fork(2),
+    lambda t: t.advance_to(7), lambda t: setattr(t, "state", Tandem(5).state),
+    lambda t: t.at(np.uint64, 0), lambda t: t.state, lambda t: t.spawn(2),
+])
+def test_shared_bitgenerator_lock_excludes_direct_operations(operation):
+    rng = Tandem(9)
+    # Prefill NumPy's buffer so every operation also encounters shared buffered state.
+    Generator(rng).random()
+    started, finished = Event(), Event()
+
+    def run():
+        started.set()
+        try:
+            return operation(rng)
+        finally:
+            finished.set()
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        with rng.lock:
+            future = workers.submit(run)
+            assert started.wait(2)
+            assert not finished.wait(0.05)
+            # A separate generator has its own lock and can still draw.
+            independent = workers.submit(lambda: Tandem(10).raw())
+            assert independent.result(timeout=2) == Tandem(10).raw()
+        future.result(timeout=2)
 
 
 def test_spawn_is_split_by_index():

@@ -109,6 +109,8 @@ specification's own mappings, so `Generator(Tandem(42)).random(n)` equals `Tande
 `key`, `position`, and `K`, and pickling goes through it. State restoration and pickling
 preserve unsigned successor positions in `[0, 2**64)`, including those reached by a draw
 past `2**63`; `from_key` and explicit seeks retain the initial-position bound `[0, 2**63)`.
+Direct fills raise `OverflowError` before changing state or output when the whole fill's
+aligned successor would exceed `2**64 - 1`.
 
 ## Parallel use
 

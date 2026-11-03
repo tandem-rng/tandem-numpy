@@ -1,7 +1,7 @@
 # cython: language_level=3, boundscheck=False, wraparound=False
 """Tandem8x32 as a NumPy BitGenerator over the reference C implementation."""
 
-from libc.stdint cimport uint8_t, uint16_t, uint32_t, uint64_t
+from libc.stdint cimport uint8_t, uint16_t, uint32_t, uint64_t, UINT64_MAX
 
 import numpy as np
 cimport numpy as np
@@ -84,8 +84,14 @@ cdef struct buffered:
 
 cdef inline uint64_t next_u64(void *st) noexcept nogil:
     cdef buffered *b = <buffered *>st
+    cdef uint64_t position, aligned
     b.has_pending = False
     if b.left == 0:
+        position = tandem_position(&b.rng)
+        aligned = (position + 63) & ~<uint64_t>63
+        if aligned < position or (UINT64_MAX - aligned) // 64 < BUF_WORDS:
+            # A valid scalar tail draw need not have room for the entire prefetch.
+            return tandem_next_u64(&b.rng)
         tandem_fill_u64(&b.rng, b.buf, BUF_WORDS)
         b.left = BUF_WORDS
     b.left -= 1
@@ -110,6 +116,12 @@ cdef double next_f64(void *st) noexcept nogil:
 
 cdef inline uint64_t logical_position(buffered *b) noexcept nogil:
     return tandem_position(&b.rng) - 64 * b.left - (32 if b.has_pending else 0)
+
+cdef inline void check_span(buffered *b, size_t n, unsigned bits, unsigned alignment) except *:
+    cdef uint64_t position = logical_position(b)
+    cdef uint64_t aligned = (position + alignment - 1) & ~<uint64_t>(alignment - 1)
+    if aligned < position or n > (UINT64_MAX - aligned) // bits:
+        raise OverflowError("fill successor exceeds the unsigned 64-bit position range")
 
 cdef inline void restore_position(tandem_rng *rng, uint64_t position) noexcept nogil:
     # The checked seek accepts initial positions only; buffered draws can have a valid
@@ -359,6 +371,7 @@ cdef class Tandem(BitGenerator):
         cdef size_t n = a.size
         cdef void *p = np.PyArray_DATA(a)
         with self.lock:
+            check_span(&self.st, n, 8 * a.dtype.itemsize, 8 * a.dtype.itemsize)
             flush(&self.st)
             if a.dtype == np.float64:
                 with nogil:
@@ -378,6 +391,7 @@ cdef class Tandem(BitGenerator):
         cdef void *p = np.PyArray_DATA(a)
         cdef int w = a.dtype.itemsize
         with self.lock:
+            check_span(&self.st, n, 8 * w, 8 * w)
             flush(&self.st)
             with nogil:
                 if w == 8:
@@ -463,6 +477,8 @@ cdef class Tandem(BitGenerator):
         cdef void *p = np.PyArray_DATA(a)
         cdef size_t count = a.size
         with self.lock:
+            if count:
+                check_span(&self.st, count, 8 * dtype.itemsize, 8 * dtype.itemsize)
             flush(&self.st)
             if dtype == np.uint32:
                 with nogil:
@@ -494,6 +510,10 @@ cdef class Tandem(BitGenerator):
         cdef void *p = np.PyArray_DATA(a)
         cdef size_t n = a.size
         with self.lock:
+            if a.dtype == np.float64:
+                check_span(&self.st, n, 64, 64)
+            elif n:
+                check_span(&self.st, n // 2 + n % 2, 64, 32)
             flush(&self.st)
             if a.dtype == np.float64:
                 with nogil:
@@ -517,6 +537,8 @@ cdef class Tandem(BitGenerator):
         cdef void *p = np.PyArray_DATA(a)
         cdef size_t n = a.size
         with self.lock:
+            if n:
+                check_span(&self.st, n, 8 * a.dtype.itemsize, 8 * a.dtype.itemsize)
             flush(&self.st)
             if a.dtype == np.float64:
                 with nogil:
@@ -535,12 +557,14 @@ cdef class Tandem(BitGenerator):
         """
         if size is None and out is None:
             with self.lock:
+                check_span(&self.st, 1, 64, 64)
                 flush(&self.st)
                 return np.uint32(tandem_choice(&self.st.rng, &table.t))
         cdef np.ndarray a = _buffer(size, np.uint32, out, (np.uint32,))
         cdef uint32_t *p = <uint32_t *>np.PyArray_DATA(a)
         cdef size_t n = a.size
         with self.lock:
+            check_span(&self.st, n, 64, 64)
             flush(&self.st)
             with nogil:
                 tandem_fill_choice(&self.st.rng, p, n, &table.t)
@@ -548,7 +572,11 @@ cdef class Tandem(BitGenerator):
 
     cdef void _fill(self, np.ndarray a, int code, size_t n):
         cdef void *p = np.PyArray_DATA(a)
+        cdef unsigned bits = (128 if code == CODE_U128 else 64 if code == CODE_CHAR
+                              else 1 if code == CODE_BOOL else 8 * a.dtype.itemsize)
+        cdef unsigned alignment = bits // 2 if code in (CODE_C32, CODE_C64) else bits
         with self.lock:
+            check_span(&self.st, n, bits, alignment)
             flush(&self.st)
             with nogil:
                 fill_code(&self.st.rng, code, p, n)

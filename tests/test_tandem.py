@@ -238,6 +238,88 @@ def test_buffered_unsigned_successor_continuation_and_restore():
     assert rng.position == 2**63 + 128
 
 
+def tail_rng(position):
+    rng = Tandem(42)
+    rng.state = {**rng.state, "position": position}
+    return rng
+
+
+def test_numpy_callbacks_draw_valid_tail_without_full_prefetch():
+    start = 2**64 - 256
+    want = tail_rng(start).raw(3)
+    rng = tail_rng(start)
+    gen = Generator(rng)
+    assert gen.bit_generator.random_raw() == want[0]
+    assert rng.at(np.uint64, 0) == want[1]
+    assert rng.raw() == want[1]
+    assert gen.bit_generator.random_raw() == want[2]
+    assert rng.position == 2**64 - 64
+    state = rng.state
+    with pytest.raises(OverflowError):
+        rng.raw()
+    assert rng.state == state
+
+    rng = tail_rng(start)
+    words = tail_rng(start).raw(4, np.uint32)
+    gen = Generator(rng)
+    assert np.array_equal(gen.integers(0, 2**32, 3, np.uint32), words[:3])
+    assert rng.at(np.uint32, 0) == words[3]
+    assert rng.raw(dtype=np.uint32) == words[3]
+    assert rng.position == start + 128
+
+
+@pytest.mark.parametrize("draw, dtype", [
+    (lambda t, out: t.raw(out=out), np.uint64),
+    (lambda t, out: t.random(out=out), np.float64),
+    (lambda t, out: t.fill(out), np.complex64),
+    (lambda t, out: t.char(out=out), np.uint32),
+    (lambda t, out: t.below(7, out=out), np.uint64),
+    (lambda t, out: t.normal(out=out), np.float64),
+    (lambda t, out: t.normal(dtype=np.float32, out=out), np.float32),
+    (lambda t, out: t.exponential(out=out), np.float64),
+    (lambda t, out: t.choice(ChoiceTable([1, 2]), out=out), np.uint32),
+])
+def test_direct_tail_fill_rejects_whole_span_before_writing(draw, dtype):
+    rng = tail_rng(2**64 - 128)
+    out = np.full(3, 17, dtype=dtype)
+    state = rng.state
+    with pytest.raises(OverflowError):
+        draw(rng, out)
+    assert (out == 17).all() and rng.state == state
+    assert rng.raw() == tail_rng(state["position"]).raw()
+
+
+def test_tail_u128_and_float32_normal_pair_span():
+    rng = tail_rng(2**64 - 128)
+    out = np.full((1, 2), 17, np.uint64)
+    with pytest.raises(OverflowError):
+        rng.u128(out=out)
+    assert (out == 17).all() and rng.position == 2**64 - 128
+    # One Float32 normal consumes two uniforms, even when only its cos half is returned.
+    rng = tail_rng(2**64 - 64)
+    with pytest.raises(OverflowError):
+        rng.normal(dtype=np.float32)
+    assert rng.position == 2**64 - 64
+
+
+def test_tail_empty_fill_alignment_and_no_alignment_paths():
+    rng = tail_rng(2**64 - 1)
+    for empty in (lambda: rng.raw(0), lambda: rng.random(0), lambda: rng.normal(0)):
+        with pytest.raises(OverflowError):
+            empty()
+        assert rng.position == 2**64 - 1
+    assert rng.below(7, 0).size == 0
+    assert rng.normal(0, np.float32).size == 0
+    assert rng.exponential(0).size == 0
+    assert rng.position == 2**64 - 1
+
+
+def test_empty_char_aligns_to_consumed_width():
+    rng = Tandem(42)
+    rng.position = 1
+    assert rng.char(0).size == 0 and rng.position == 64
+
+
 @pytest.mark.parametrize("operation", [
     lambda t: t.random(2), lambda t: t.raw(2), lambda t: t.normal(2),
     lambda t: t.exponential(2), lambda t: t.fill(np.empty(2)),
